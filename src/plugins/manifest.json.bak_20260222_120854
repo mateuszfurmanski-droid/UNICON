@@ -1,0 +1,10 @@
+{
+  "enabled": [
+    "ping_api.py",
+    "btn2_fix_api.py",
+    "clean_boot_report.py"
+  ],
+  "plugins": [
+    "btn2_contract.py"
+  ]
+}

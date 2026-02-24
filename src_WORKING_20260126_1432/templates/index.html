@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UNICON Operate – Live Job</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <!-- Camera background -->
+    <img id="cam" src="/cam.mjpg" alt="cam" />
+
+    <!-- Green tint layer (25%) -->
+    <div id="tint"></div>
+
+    <!-- Overlay canvas for crosshair, ruler, etc. -->
+    <canvas id="overlay"></canvas>
+
+    <!-- Bottom HUD -->
+    <div id="hud">
+      <div id="hudline">boot...</div>
+    </div>
+
+    <!-- Tiny help (toggle later) -->
+    <div id="help">
+      LMB: point A → point B (ruler) | RMB: clear | Wheel: zoom | Drag: pan
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

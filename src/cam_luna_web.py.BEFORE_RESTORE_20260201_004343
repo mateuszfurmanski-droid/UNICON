@@ -1,0 +1,12 @@
+def api_get_mode():
+    return {
+        "mode": CURRENT_MODE
+    }
+def api_get_mode():
+    return {
+        "mode": CURRENT_MODE
+    }
+
+def api_set_mode(mode):
+    m = _set_mode(mode)
+    return {"mode": m.value}

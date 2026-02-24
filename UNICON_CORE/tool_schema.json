@@ -1,0 +1,17 @@
+{
+  "version": "0.1",
+  "tools": [
+    {
+      "tool_id": "DISTANCE",
+      "name": "Distance Measure",
+      "requires": ["LIDAR"],
+      "hud": ["distance_m", "status", "mode"]
+    },
+    {
+      "tool_id": "LEVEL",
+      "name": "Level Measure",
+      "requires": ["IMU"],
+      "hud": ["pitch_deg", "roll_deg", "status", "mode"]
+    }
+  ]
+}

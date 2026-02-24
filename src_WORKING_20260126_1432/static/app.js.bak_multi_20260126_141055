@@ -1,0 +1,167 @@
+(() => {
+  const stage = document.getElementById('stage');
+  const cam = document.getElementById('cam');
+  const canvas = document.getElementById('overlay');
+  const hud = document.getElementById('hudline');
+
+  const ctx = canvas.getContext('2d');
+
+  // ---- view transform (pan/zoom) ----
+  let zoom = 1.0;
+  let panX = 0;
+  let panY = 0;
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  // ---- ruler points (screen-space for now) ----
+  let A = null; // {x,y}
+  let B = null;
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+    draw();
+  }
+
+  function applyTransform() {
+    cam.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  }
+
+  function drawCrosshair() {
+    const w = canvas.width, h = canvas.height;
+    const cx = w / 2, cy = h / 2;
+    ctx.strokeStyle = 'rgba(124,255,124,0.95)';
+    ctx.lineWidth = 2;
+
+    // cross
+    ctx.beginPath();
+    ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy);
+    ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14);
+    ctx.stroke();
+  }
+
+  function drawRuler() {
+    if (!A) return;
+
+    ctx.fillStyle = 'rgba(124,255,124,0.95)';
+    ctx.strokeStyle = 'rgba(124,255,124,0.95)';
+    ctx.lineWidth = 2;
+
+    // point A
+    ctx.beginPath();
+    ctx.arc(A.x, A.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (!B) return;
+
+    // point B
+    ctx.beginPath();
+    ctx.arc(B.x, B.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // line
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.stroke();
+
+    // distance px (v1)
+    const dx = B.x - A.x;
+    const dy = B.y - A.y;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    const label = `${d.toFixed(0)} px`;
+
+    const mx = (A.x + B.x) / 2;
+    const my = (A.y + B.y) / 2;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(mx - 30, my - 18, 70, 20);
+
+    ctx.fillStyle = 'rgba(124,255,124,0.95)';
+    ctx.font = '14px Arial';
+    ctx.fillText(label, mx - 26, my - 4);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawCrosshair();
+    drawRuler();
+  }
+
+  // ---- mouse interaction on stage (canvas is pointer-events:none) ----
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  stage.addEventListener('mousedown', (e) => {
+    if (e.button === 2) { // RMB clear ruler
+      A = null; B = null;
+      draw();
+      return;
+    }
+
+    // LMB sets ruler points (if not dragging intent)
+    if (e.shiftKey) { // SHIFT+LMB drag/pan
+      dragging = true;
+      lastX = e.clientX; lastY = e.clientY;
+      return;
+    }
+
+    const rect = stage.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (!A) A = {x, y};
+    else if (!B) B = {x, y};
+    else { A = {x, y}; B = null; }
+
+    draw();
+  });
+
+  stage.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    panX += dx;
+    panY += dy;
+    applyTransform();
+  });
+
+  window.addEventListener('mouseup', () => dragging = false);
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = Math.sign(e.deltaY);
+    const factor = (delta > 0) ? 0.92 : 1.08;
+    zoom = Math.max(0.5, Math.min(4.0, zoom * factor));
+    applyTransform();
+  }, { passive: false });
+
+  // ---- HUD polling ----
+  async function pollHealth() {
+    try {
+      const r = await fetch('/health', { cache: 'no-store' });
+      const j = await r.json();
+      const L = j.latest || {};
+      const S = j.status || {};
+      const dist = (L.dist_cm == null) ? '—' : `${L.dist_cm.toFixed(0)}cm`;
+      const strength = (L.strength == null) ? '—' : `${L.strength}`;
+      const temp = (L.temp_c == null) ? '—' : `${L.temp_c.toFixed(1)}C`;
+      const roll = (L.roll == null) ? '—' : `${L.roll.toFixed(2)}`;
+      const pitch = (L.pitch == null) ? '—' : `${L.pitch.toFixed(2)}`;
+      const fps = (L.fps == null) ? '—' : `${L.fps.toFixed(1)}`;
+
+      const flags = `V:${S.video_ok ? 'OK' : 'NO'} I:${S.imu_ok ? 'OK' : 'NO'} L:${S.lidar_ok ? 'OK' : 'NO'}`;
+      hud.textContent = `LiDAR:${dist} S:${strength} T:${temp} | R:${roll} P:${pitch} FPS:${fps} | ${flags}`;
+    } catch (e) {
+      hud.textContent = 'health: fetch failed';
+    }
+  }
+
+  // init
+  window.addEventListener('resize', resize);
+  resize();
+  applyTransform();
+  pollHealth();
+  setInterval(pollHealth, 200);
+})();

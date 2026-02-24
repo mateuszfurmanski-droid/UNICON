@@ -1,0 +1,369 @@
+(() => {
+  const stage = document.getElementById('stage');
+  const cam = document.getElementById('cam');
+  const canvas = document.getElementById('overlay');
+  const hud = document.getElementById('hudline');
+  const ctx = canvas.getContext('2d');
+
+  // ---- view transform (pan/zoom) ----
+  let zoom = 1.0;
+  let panX = 0;
+  let panY = 0;
+
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  // ---- measurements ----
+  // each measurement = { A:{x,y}, B:{x,y}, id:int, ts:number }
+  const measures = [];
+  let nextId = 1;
+
+  // current building segment
+  let curA = null;
+  let curB = null;
+  let previewB = null;
+
+  const SNAP_PX = 14;
+
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+    draw();
+  }
+
+  function applyTransform() {
+    cam.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  }
+
+  function dist2(p, q) {
+    const dx = p.x - q.x;
+    const dy = p.y - q.y;
+    return dx * dx + dy * dy;
+  }
+
+  function snapPoint(p) {
+    let best = null;
+    let bestD2 = SNAP_PX * SNAP_PX;
+
+    if (curA && dist2(p, curA) <= bestD2) best = curA;
+    if (curB && dist2(p, curB) <= bestD2) best = curB;
+
+    for (const m of measures) {
+      if (m.A && dist2(p, m.A) <= bestD2) best = m.A;
+      if (m.B && dist2(p, m.B) <= bestD2) best = m.B;
+    }
+
+    return best
+      ? { x: best.x, y: best.y, snapped: true }
+      : { x: p.x, y: p.y, snapped: false };
+  }
+
+  function drawCrosshair() {
+    const w = canvas.width, h = canvas.height;
+    const cx = w / 2, cy = h / 2;
+    ctx.strokeStyle = 'rgba(124,255,124,0.95)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy);
+    ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14);
+    ctx.stroke();
+  }
+
+  function drawDot(p, r = 4, alpha = 0.95) {
+    ctx.fillStyle = `rgba(124,255,124,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawLine(p1, p2, alpha = 0.95, width = 2) {
+    ctx.strokeStyle = `rgba(124,255,124,${alpha})`;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+
+  function drawSnapHint(p) {
+    ctx.strokeStyle = 'rgba(124,255,124,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, SNAP_PX, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function pxDist(p1, p2) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function drawLabel(p1, p2, text, alphaBg = 0.55, alphaFg = 0.95) {
+    const mx = (p1.x + p2.x) / 2;
+    const my = (p1.y + p2.y) / 2;
+
+    ctx.fillStyle = `rgba(0,0,0,${alphaBg})`;
+    ctx.fillRect(mx - 50, my - 18, 120, 20);
+
+    ctx.fillStyle = `rgba(124,255,124,${alphaFg})`;
+    ctx.font = '14px Arial';
+    ctx.fillText(text, mx - 46, my - 4);
+  }
+
+  function drawMeasure(m, faded = false) {
+    const a = faded ? 0.55 : 0.95;
+    drawLine(m.A, m.B, a, 2);
+    drawDot(m.A, 4, a);
+    drawDot(m.B, 4, a);
+
+    const d = pxDist(m.A, m.B);
+    drawLabel(m.A, m.B, `#${m.id}  ${d.toFixed(0)} px`, 0.45, a);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    drawCrosshair();
+
+    for (const m of measures) drawMeasure(m, false);
+
+    if (curA && !curB && previewB) {
+      const sp = snapPoint(previewB);
+      if (sp.snapped) drawSnapHint(sp);
+      drawLine(curA, sp, 0.55, 2);
+      drawDot(curA, 4, 0.95);
+      drawDot(sp, 3, 0.75);
+      const d = pxDist(curA, sp);
+      drawLabel(curA, sp, `NEW  ${d.toFixed(0)} px`, 0.45, 0.75);
+    }
+
+    if (curA && curB) {
+      drawLine(curA, curB, 0.95, 2);
+      drawDot(curA, 4, 0.95);
+      drawDot(curB, 4, 0.95);
+      const d = pxDist(curA, curB);
+      drawLabel(curA, curB, `NEW  ${d.toFixed(0)} px`, 0.45, 0.95);
+    }
+  }
+
+  function getMousePos(e) {
+    const rect = stage.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  // ---- delete nearest measure (ALT+click) ----
+  function tryDeleteNearest(p) {
+    let bestIdx = -1;
+    let best = 1e12;
+
+    for (let i = 0; i < measures.length; i++) {
+      const m = measures[i];
+      const dA = dist2(p, m.A);
+      const dB = dist2(p, m.B);
+      const d = Math.min(dA, dB);
+      if (d < best) {
+        best = d;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0 && best <= (26 * 26)) {
+      measures.splice(bestIdx, 1);
+      draw();
+      scheduleSave();
+      return true;
+    }
+    return false;
+  }
+
+  // ---- API (live_job) ----
+  let saveTimer = null;
+  let pendingSave = false;
+
+  async function loadLiveJob() {
+    try {
+      const r = await fetch('/api/live_job', { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+
+      measures.length = 0;
+      if (Array.isArray(j.measurements)) {
+        for (const m of j.measurements) {
+          if (!m || !m.A || !m.B) continue;
+          measures.push({
+            id: Number(m.id) || 0,
+            ts: Number(m.ts) || Date.now(),
+            A: { x: Number(m.A.x), y: Number(m.A.y) },
+            B: { x: Number(m.B.x), y: Number(m.B.y) },
+          });
+        }
+      }
+
+      // next id
+      let mx = 0;
+      for (const m of measures) mx = Math.max(mx, m.id || 0);
+      nextId = (Number(j.next_id) || (mx + 1)) || (mx + 1);
+
+      draw();
+    } catch (_) { /* ignore */ }
+  }
+
+  async function saveLiveJobNow() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    pendingSave = false;
+
+    const payload = {
+      version: 1,
+      updated_ts: Date.now() / 1000,
+      next_id: nextId,
+      measurements: measures.map(m => ({
+        id: m.id,
+        ts: m.ts,
+        A: { x: m.A.x, y: m.A.y },
+        B: { x: m.B.x, y: m.B.y },
+      })),
+    };
+
+    try {
+      const r = await fetch('/api/live_job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error('POST /api/live_job ' + r.status);
+    } catch (_) {
+      // jeśli sieć/serwer padnie - spróbuj jeszcze raz po chwili
+      pendingSave = true;
+    }
+
+    if (pendingSave) {
+      pendingSave = false;
+      scheduleSave(true);
+    }
+  }
+
+  function scheduleSave(immediate = false) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveLiveJobNow(); }, immediate ? 0 : 250);
+  }
+
+  // ---- interactions ----
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  stage.addEventListener('mousedown', (e) => {
+    // RMB:
+    // - jeśli budujesz segment -> anuluj
+    // - jeśli nic nie budujesz -> clear all
+    if (e.button === 2) {
+      if (curA || curB || previewB) {
+        curA = null; curB = null; previewB = null;
+      } else {
+        measures.length = 0;
+        nextId = 1;
+        scheduleSave(); // <-- klucz: zapis po czyszczeniu
+      }
+      draw();
+      return;
+    }
+
+    // SHIFT+LMB: pan
+    if (e.shiftKey && e.button === 0) {
+      dragging = true;
+      lastX = e.clientX; lastY = e.clientY;
+      return;
+    }
+
+    // ALT+LMB: delete nearest
+    if (e.altKey && e.button === 0) {
+      const p = getMousePos(e);
+      if (tryDeleteNearest(p)) return;
+    }
+
+    // LMB: set A then set B, then SAVE to list and start new
+    if (e.button === 0) {
+      const p = getMousePos(e);
+
+      if (!curA) {
+        const sp = snapPoint(p);
+        curA = { x: sp.x, y: sp.y };
+        curB = null;
+        previewB = null;
+        draw();
+        return;
+      }
+
+      const sp = snapPoint(p);
+      curB = { x: sp.x, y: sp.y };
+
+      measures.push({ A: curA, B: curB, id: nextId++, ts: Date.now() });
+      scheduleSave(); // <-- TO NAPRAWIA “ZNIKA PO RESTART”
+
+      curA = null;
+      curB = null;
+      previewB = null;
+
+      draw();
+    }
+  });
+
+  stage.addEventListener('mousemove', (e) => {
+    if (dragging) {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      panX += dx;
+      panY += dy;
+      applyTransform();
+      return;
+    }
+
+    if (curA && !curB) {
+      previewB = getMousePos(e);
+      draw();
+    }
+  });
+
+  stage.addEventListener('mouseup', () => { dragging = false; });
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = Math.sign(e.deltaY);
+    const factor = delta > 0 ? 0.92 : 1.08;
+    zoom = Math.min(3.0, Math.max(0.45, zoom * factor));
+    applyTransform();
+  }, { passive: false });
+
+  // ---- health polling (HUD line) ----
+  async function pollHealth() {
+    try {
+      const r = await fetch('/health', { cache: 'no-store' });
+      if (!r.ok) throw new Error('health ' + r.status);
+      const j = await r.json();
+
+      const d = j?.latest?.dist_cm;
+      const s = j?.latest?.strength;
+      const t = j?.latest?.temp_c;
+      const roll = j?.latest?.roll;
+      const pitch = j?.latest?.pitch;
+      const fps = j?.latest?.fps;
+
+      hud.textContent =
+        `dist ${d ?? '-'}cm | S ${s ?? '-'} | T ${t ?? '-'}C | roll ${roll ?? '-'} | pitch ${pitch ?? '-'} | fps ${fps ?? '-'}`;
+    } catch (_) {
+      hud.textContent = 'health: fetch failed';
+    }
+  }
+
+  // ---- boot ----
+  window.addEventListener('resize', resize);
+  resize();
+  applyTransform();
+
+  loadLiveJob();
+  setInterval(loadLiveJob, 3000); // multi-tab / recovery sync
+  pollHealth();
+  setInterval(pollHealth, 250);
+
+})();

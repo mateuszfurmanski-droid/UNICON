@@ -1,0 +1,126 @@
+{
+  "schema_version": "v0.1",
+  "assigned_package_id": "pkg-joinery-doors-001",
+  "assigned_to": {
+    "role": "INSTALLER",
+    "name": "Mateusz"
+  },
+  "snag_list": [
+    {
+      "id": "snag-door1-frame",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-1",
+      "step_id": "door1-frame",
+      "title": "Door 1 — Frame set true (3D plumb)",
+      "issue_type": "FRAME",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 1",
+      "reference_photo_path": "photos/door1_frame_ref.jpg",
+      "tool_id": "32",
+      "tool_name": "FRAME PLUMB 3D"
+    },
+    {
+      "id": "snag-door1-gaps",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-1",
+      "step_id": "door1-gaps",
+      "title": "Door 1 — Gap check (3mm around, bottom < 8mm)",
+      "issue_type": "GAPS",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 1",
+      "reference_photo_path": "photos/door1_gaps_ref.jpg",
+      "tool_id": "34",
+      "tool_name": "DOOR GAP TOLERANCE"
+    },
+    {
+      "id": "snag-door1-hinge",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-1",
+      "step_id": "door1-hinge",
+      "title": "Door 1 — Hinge balance check (optional)",
+      "issue_type": "HINGE",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 1",
+      "reference_photo_path": "photos/door1_hinge_ref.jpg",
+      "tool_id": "35",
+      "tool_name": "HINGE LOAD CHECK"
+    },
+
+    {
+      "id": "snag-door2-frame",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-2",
+      "step_id": "door2-frame",
+      "title": "Door 2 — Frame set true (3D plumb)",
+      "issue_type": "FRAME",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 2",
+      "reference_photo_path": "photos/door2_frame_ref.jpg",
+      "tool_id": "32",
+      "tool_name": "FRAME PLUMB 3D"
+    },
+    {
+      "id": "snag-door2-gaps",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-2",
+      "step_id": "door2-gaps",
+      "title": "Door 2 — Gap check (3mm around, bottom < 8mm)",
+      "issue_type": "GAPS",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 2",
+      "reference_photo_path": "photos/door2_gaps_ref.jpg",
+      "tool_id": "34",
+      "tool_name": "DOOR GAP TOLERANCE"
+    },
+    {
+      "id": "snag-door2-hinge",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-door-2",
+      "step_id": "door2-hinge",
+      "title": "Door 2 — Hinge balance check (optional)",
+      "issue_type": "HINGE",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom 2",
+      "reference_photo_path": "photos/door2_hinge_ref.jpg",
+      "tool_id": "35",
+      "tool_name": "HINGE LOAD CHECK"
+    },
+
+    {
+      "id": "snag-handles-confirm",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-handles",
+      "step_id": "handles-confirm",
+      "title": "Handles x4 — photo proof + height consistency",
+      "issue_type": "CUT",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Various",
+      "reference_photo_path": "photos/handles_ref.jpg",
+      "tool_id": "33",
+      "tool_name": "CUT MITRE SAW"
+    },
+
+    {
+      "id": "snag-fire-signage-photo",
+      "package_id": "pkg-joinery-doors-001",
+      "task_id": "task-fire-signage",
+      "step_id": "signage-photo",
+      "title": "Fire Door signage — KEEP SHUT (photo proof)",
+      "issue_type": "FINAL",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "As required",
+      "reference_photo_path": "photos/fire_sign_ref.jpg",
+      "tool_id": "36",
+      "tool_name": "FINAL CLIENT CHECK"
+    }
+  ],
+  "notes": "Installer-visible snag list generated from assigned task package."
+}

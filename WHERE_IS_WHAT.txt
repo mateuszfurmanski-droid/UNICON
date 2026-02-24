@@ -1,0 +1,96 @@
+========================================
+TS: 2026-02-01T20:28:51+00:00
+BASE: /home/pi/UNICON
+MAIN_RUNTIME_FILE: /home/pi/UNICON/src/cam_luna_web.py
+
+[A] server start hints (port/host/framework):
+4:import time
+5:import threading
+6:import math
+8:import cv2
+9:import serial
+10:import smbus
+11:from flask import Flask, Response, jsonify, render_template
+16:HOST = "0.0.0.0"
+17:PORT = 8090
+43:app = Flask(__name__)
+107:                dist = frame[2] | (frame[3] << 8)  # TF-Luna usually reports cm
+288:    app.run(host=HOST, port=PORT, threaded=True)
+
+[B] inline HTML markers in cam_luna_web.py:
+
+[C] template/static dirs (maxdepth 4):
+/home/pi/UNICON/src/templates
+/home/pi/UNICON/src/static
+/home/pi/UNICON/src_WORKING_20260126_1432/templates
+/home/pi/UNICON/src_WORKING_20260126_1432/static
+
+[D] repo grep (first 120 hits):
+/home/pi/UNICON/api/unicon_api.py:3:from http.server import BaseHTTPRequestHandler, HTTPServer
+/home/pi/UNICON/api/unicon_api.py:10:<html>
+/home/pi/UNICON/api/unicon_api.py:47:</html>
+/home/pi/UNICON/api/unicon_api.py:57:class H(BaseHTTPRequestHandler):
+/home/pi/UNICON/UNICON_CORE/hud_lidar.html:2:<html lang="pl">
+/home/pi/UNICON/UNICON_CORE/hud_lidar.html:57:</html>
+/home/pi/UNICON/UNICON_CORE/unicon_api.py:3:from flask import Flask, jsonify
+/home/pi/UNICON/UNICON_CORE/unicon_api.py:13:app = Flask(__name__)
+/home/pi/UNICON/UNICON_CORE/unicon_api.py:61:    app.run(host="0.0.0.0", port=8090)
+/home/pi/UNICON/UNICON_CORE/services/lidar_service/app.py:1:from flask import Flask, jsonify
+/home/pi/UNICON/UNICON_CORE/services/lidar_service/app.py:10:app = Flask(__name__)
+/home/pi/UNICON/UNICON_CORE/services/lidar_service/app.py:32:    app.run(host="0.0.0.0", port=8090)
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:1:from flask import Flask, Response, request, redirect, jsonify, render_template_string
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:11:app = Flask(__name__)
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:297:<html>
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:350:</html>
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:357:    return render_template_string(
+/home/pi/UNICON/UNICON_CORE/hud_v1/app.py:467:    app.run(host="0.0.0.0", port=cfg.PORT, threaded=True)
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:9:from flask import Flask, Response, request, redirect, jsonify, render_template_string
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:21:app = Flask(__name__)
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:182:<html><body style="background:black;color:#0f0;font-family:monospace;">
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:190:</body></html>
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:196:    return render_template_string(PAGE, tools=state["tools"])
+/home/pi/UNICON/UNICON_CORE/hud_debug.py:220:    app.run(host="0.0.0.0", port=PORT, threaded=True)
+/home/pi/UNICON/UNICON_WEB_DEMO/index.html:2:<html lang="en">
+/home/pi/UNICON/UNICON_WEB_DEMO/index.html:10:  <canvas id="overlay"></canvas>
+/home/pi/UNICON/UNICON_WEB_DEMO/index.html:18:</html>
+/home/pi/UNICON/assets/hud.html:2:<html lang="en">
+/home/pi/UNICON/assets/hud.html:76:</html>
+/home/pi/UNICON/UNICON_WEB_APP/app/index.html:2:<html lang="pl">
+/home/pi/UNICON/UNICON_WEB_APP/app/index.html:18:    <canvas id="hud"></canvas>
+/home/pi/UNICON/UNICON_WEB_APP/app/index.html:27:</html>
+/home/pi/UNICON/_LOCKS/20260128_220313/unicon_api.py:3:from http.server import BaseHTTPRequestHandler, HTTPServer
+/home/pi/UNICON/_LOCKS/20260128_220313/unicon_api.py:10:<html>
+/home/pi/UNICON/_LOCKS/20260128_220313/unicon_api.py:47:</html>
+/home/pi/UNICON/_LOCKS/20260128_220313/unicon_api.py:57:class H(BaseHTTPRequestHandler):
+/home/pi/UNICON/src/templates/index.html:2:<html lang="en">
+/home/pi/UNICON/src/templates/index.html:18:    <canvas id="overlay"></canvas>
+/home/pi/UNICON/src/templates/index.html:58:</html>
+/home/pi/UNICON/src/cam_luna_web.py:11:from flask import Flask, Response, jsonify, render_template
+/home/pi/UNICON/src/cam_luna_web.py:43:app = Flask(__name__)
+/home/pi/UNICON/src/cam_luna_web.py:250:    return render_template("index.html")
+/home/pi/UNICON/src/cam_luna_web.py:288:    app.run(host=HOST, port=PORT, threaded=True)
+/home/pi/UNICON/src/cam_lidar_server.py:5:from flask import Flask, Response, jsonify
+/home/pi/UNICON/src/cam_lidar_server.py:11:app = Flask(__name__)
+/home/pi/UNICON/src/cam_lidar_server.py:90:    app.run(host="0.0.0.0", port=8090)
+/home/pi/UNICON/src/unicon_hud_oled.py:3:from flask import Flask, Response, jsonify
+/home/pi/UNICON/src/unicon_hud_oled.py:25:app = Flask(__name__)
+/home/pi/UNICON/src/unicon_hud_oled.py:196:    return "<html><body style='margin:0;background:#000'><img src='/cam.mjpg' style='width:100vw;height:100vh;object-fit:contain'></body></html>"
+/home/pi/UNICON/src/unicon_hud_oled.py:204:    app.run(host="0.0.0.0", port=HTTP_PORT, threaded=True)
+/home/pi/UNICON/src/unicon_core.py:2:from http.server import BaseHTTPRequestHandler, HTTPServer
+/home/pi/UNICON/src/unicon_core.py:109:class Handler(BaseHTTPRequestHandler):
+/home/pi/UNICON/src_WORKING_20260126_1432/templates/index.html:2:<html lang="en">
+/home/pi/UNICON/src_WORKING_20260126_1432/templates/index.html:18:    <canvas id="overlay"></canvas>
+/home/pi/UNICON/src_WORKING_20260126_1432/templates/index.html:33:</html>
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_luna_web.py:11:from flask import Flask, Response, jsonify, render_template
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_luna_web.py:43:app = Flask(__name__)
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_luna_web.py:247:    return render_template("index.html")
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_luna_web.py:272:    app.run(host=HOST, port=PORT, threaded=True)
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_lidar_server.py:5:from flask import Flask, Response, jsonify
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_lidar_server.py:11:app = Flask(__name__)
+/home/pi/UNICON/src_WORKING_20260126_1432/cam_lidar_server.py:90:    app.run(host="0.0.0.0", port=8090)
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_hud_oled.py:3:from flask import Flask, Response, jsonify
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_hud_oled.py:25:app = Flask(__name__)
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_hud_oled.py:196:    return "<html><body style='margin:0;background:#000'><img src='/cam.mjpg' style='width:100vw;height:100vh;object-fit:contain'></body></html>"
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_hud_oled.py:204:    app.run(host="0.0.0.0", port=HTTP_PORT, threaded=True)
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_core.py:2:from http.server import BaseHTTPRequestHandler, HTTPServer
+/home/pi/UNICON/src_WORKING_20260126_1432/unicon_core.py:109:class Handler(BaseHTTPRequestHandler):

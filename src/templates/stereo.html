@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UNICON – Stereo Test</title>
+  <style>
+
+/* BTN2 FIX */
+#topbar, .topbar, .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+}
+#cam, img#cam, .cam, .cam-img {
+  touch-action: none;
+}
+
+
+
+/* UNICON HARD TOPBAR (always clickable) */
+#uniconTopbar {
+  position: fixed !important;
+  top: 0 !important; left: 0 !important; right: 0 !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  gap: 16px !important;
+  padding: 14px 14px !important;
+  background: rgba(0,0,0,0.65) !important;
+  backdrop-filter: blur(2px) !important;
+}
+#uniconTopbar button{
+  flex: 1 1 auto !important;
+  height: 70px !important;
+  border-radius: 22px !important;
+  border: 0 !important;
+  font-size: 34px !important;
+  letter-spacing: 2px !important;
+  background: #0a3 !important;
+  color: #0f0 !important;
+}
+#uniconTopbar button:active { transform: scale(0.98) !important; }
+
+/* make sure stream never steals taps */
+video, canvas, img, #cam, #camimg, #stream, .stream, .mjpg {
+  pointer-events: none !important;
+}
+#uniconTopbar, #uniconTopbar * { pointer-events: auto !important; }
+
+/* push content below bar */
+body { margin-top: 110px !important; }
+
+
+/* UNICON CLICK FIX (topbar must be above video/canvas) */
+#topbar{
+  position:fixed !important;
+  top:0 !important; left:0 !important; right:0 !important;
+  z-index:2147483647 !important;
+  pointer-events:auto !important;
+  display:flex; gap:18px;
+  justify-content:space-around; align-items:center;
+  padding:18px 14px;
+  background:rgba(0,0,0,0.70);
+}
+#topbar *{ pointer-events:auto !important; touch-action:manipulation !important; }
+#topbar .btn{
+  flex:1; max-width:33%;
+  height:70px; border-radius:40px;
+  border:2px solid rgba(0,255,0,0.35);
+  background:rgba(0,128,0,0.55);
+  color:#00ff00;
+  font-size:34px; letter-spacing:3px;
+}
+#topbar .btn:active{ transform:scale(0.99); }
+
+body{ padding-top:110px !important; }
+
+/* Make sure stream layer NEVER steals taps */
+video, canvas, img, #stream, #mjpeg, .stream, .video, .camera {
+  pointer-events:none !important;
+  touch-action:none !important;
+}
+
+/* UNICON FIX: TOPBAR ABOVE STREAM */
+#topbar{position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;gap:18px;justify-content:space-around;align-items:center;padding:18px 14px;background:rgba(0,0,0,0.65);pointer-events:auto}
+#topbar .btn{flex:1;max-width:33%;height:70px;border-radius:40px;border:2px solid rgba(0,255,0,0.35);background:rgba(0,128,0,0.55);color:#00ff00;font-size:34px;letter-spacing:3px}
+#topbar .btn:active{transform:scale(0.99)}
+body{padding-top:110px}
+
+    html,body{margin:0;height:100%;background:#000;color:#9fe;}
+    .wrap{display:flex;gap:6px;height:100%;padding:6px;box-sizing:border-box}
+    .cam{flex:1;position:relative;border:1px solid #133;border-radius:10px;overflow:hidden}
+    .lbl{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.55);padding:4px 8px;border-radius:8px;font:14px system-ui}
+    img{width:100%;height:100%;object-fit:contain;background:#000}
+  </style>
+<style>
+
+/* UNICON BTN2 CLICK FIX */
+#topbar, .topbar, #btnbar, .btnbar {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 9999 !important;
+  pointer-events: auto !important;
+}
+#topbar * , .topbar * , #btnbar * , .btnbar * {
+  pointer-events: auto !important;
+}
+video, canvas, #video, #canvas, .video, .canvas {
+  z-index: 1 !important;
+}
+
+</style>
+</head>
+<body>
+<div id="btn2Status" style="position:fixed;left:10px;top:60px;color:#00ff00;font-family:monospace;z-index:99999;">BTN2: ready</div>
+
+
+<div id="uniconTopbar">
+  <button onclick="btn2A();" id="btn2A" type="button">SET A</button>
+  <button onclick="btn2B();" id="btn2B" type="button">SET B</button>
+  <button onclick="btn2R();" id="btn2R" type="button">RESET</button>
+</div>
+
+
+<div id="topbar">
+  <button class="btn" id="btnA" type="button">SET A</button>
+  <button class="btn" id="btnB" type="button">SET B</button>
+  <button class="btn" id="btnR" type="button">RESET</button>
+</div>
+<script>
+(function(){
+  async function postBtn(name){
+    try{
+      await fetch('/api/btn2/' + name, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({src:'ui'})});
+    }catch(e){}
+  }
+  function bind(id, name){
+    const el = document.getElementById(id);
+    if(!el) return;
+    const h = (ev)=>{ ev.preventDefault(); ev.stopPropagation(); postBtn(name); };
+    el.addEventListener('click', h, {passive:false});
+    el.addEventListener('touchstart', h, {passive:false});
+  }
+  bind('btnA','A');
+  bind('btnB','B');
+  bind('btnR','RESET');
+})();
+</script>
+
+  <div class="wrap">
+    <div class="cam">
+      <div class="lbl">LEFT /dev/video0</div>
+      <img src="/mjpeg/left" alt="left">
+    </div>
+    <div class="cam">
+      <div class="lbl">RIGHT /dev/video2</div>
+      <img src="/mjpeg/right" alt="right">
+    </div>
+  </div>
+
+<script>
+(function(){
+  function ping(name){
+    // super simple GET (no CORS drama): image beacon
+    var u = "/api/btn2/" + name + "?ts=" + Date.now();
+    var img = new Image();
+    img.src = u;
+  }
+  function bind(id, name){
+    var el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("touchstart", function(e){ e.preventDefault(); ping(name); }, {passive:false});
+    el.addEventListener("click", function(e){ e.preventDefault(); ping(name); });
+  }
+  bind("btn2A","A"); bind("btn2B","B"); bind("btn2R","RESET");
+})();
+</script>
+
+
+<script>
+(function(){
+  const st = document.createElement('div');
+  st.id = 'uniconBtn2Status';
+  st.style.cssText = 'position:fixed;top:6px;left:6px;z-index:10000;font:12px monospace;color:#00ff66;background:rgba(0,0,0,0.35);padding:4px 6px;border-radius:6px;pointer-events:none';
+  st.textContent = 'BTN2: idle';
+  document.addEventListener('DOMContentLoaded', () => document.body.appendChild(st), { once:true });
+
+  function setStatus(t){ try{ st.textContent = t; }catch(e){} }
+
+  async function hit(name){
+    try{
+      setStatus('BTN2 HIT ' + name + ' ...');
+      const url = '/api/btn2/' + encodeURIComponent(name) + '?x=0.25&y=0.25&_=' + Date.now();
+      const r = await fetch(url, { method:'GET', cache:'no-store' });
+      const j = await r.json();
+      setStatus('BTN2 OK ' + name + ' last=' + (j && j.state ? j.state.last : '?'));
+      console.log('BTN2', name, j);
+    }catch(e){
+      setStatus('BTN2 ERR ' + name);
+      console.error(e);
+    }
+  }
+
+  function bindByText(txt, name){
+    const els = Array.from(document.querySelectorAll('a,button,div'));
+    for(const el of els){
+      if((el.textContent || '').trim().toUpperCase() === txt){
+        el.style.pointerEvents = 'auto';
+        el.style.zIndex = 10000;
+        el.addEventListener('click', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); hit(name); }, { passive:false });
+        el.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); hit(name); }, { passive:false });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  window.addEventListener('load', ()=>{
+    bindByText('SET A','A');
+    bindByText('SET B','B');
+    bindByText('RESET','RESET');
+  });
+})();
+</script>
+
+
+<script>
+(function(){
+  let lastX = 0.5, lastY = 0.5;
+
+  function setStatus(msg){
+    const el = document.getElementById('btn2Status');
+    if(el) el.textContent = msg;
+  }
+
+  async function hit(url){
+    try{
+      const r = await fetch(url, {cache:'no-store'});
+      const j = await r.json();
+      setStatus('BTN2 OK: ' + (j.btn || '?') + ' x=' + lastX.toFixed(3) + ' y=' + lastY.toFixed(3));
+      return j;
+    }catch(e){
+      setStatus('BTN2 ERR: ' + e);
+    }
+  }
+
+  window.btn2A = ()=> hit(`/api/btn2/A?x=${lastX}&y=${lastY}`);
+  window.btn2B = ()=> hit(`/api/btn2/B?x=${lastX}&y=${lastY}`);
+  window.btn2R = ()=> hit(`/api/btn2/RESET`);
+
+  function onTap(ev){
+    const img = document.getElementById('cam');
+    if(!img) return;
+    const rect = img.getBoundingClientRect();
+    const t = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+    const x = (t.clientX - rect.left) / rect.width;
+    const y = (t.clientY - rect.top) / rect.height;
+    lastX = Math.max(0, Math.min(1, x));
+    lastY = Math.max(0, Math.min(1, y));
+    setStatus(`TAP x=${lastX.toFixed(3)} y=${lastY.toFixed(3)}`);
+    ev.preventDefault();
+  }
+
+  function hook(){
+    const img = document.getElementById('cam');
+    if(!img) { setTimeout(hook, 300); return; }
+    img.addEventListener('touchstart', onTap, {passive:false});
+    img.addEventListener('mousedown', onTap);
+    setStatus('BTN2: tap image, then SET A/B');
+  }
+  hook();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,54 @@
+html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+#stage { position:fixed; inset:0; }
+#cam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+#tint { position:absolute; inset:0; pointer-events:none; background:rgba(0,255,0,0.06); mix-blend-mode:screen; }
+#overlay { position:absolute; inset:0; width:100%; height:100%; }
+
+#hud {
+  position:absolute; left:0; right:0; bottom:0;
+  padding:6px 10px;
+  font: 12px/1.15 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(0,255,0,0.92);
+  background: rgba(0,0,0,0.25);
+  border-top: 1px solid rgba(0,255,0,0.18);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events:none;
+}
+
+#hudline { opacity: 0.95; }
+
+#help{
+  position:absolute; left:10px; top:10px;
+  font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(0,255,0,0.80);
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(0,255,0,0.18);
+  padding:6px 8px;
+  border-radius: 8px;
+  pointer-events:none;
+}
+
+/* ===== HUD FIX (thin + clamp to screen) ===== */
+#hud{
+  position:fixed;
+  left:0; right:0; bottom:0;
+  padding:4px 6px;
+  background: rgba(0,0,0,0.18);
+  border-top: 1px solid rgba(140,255,180,0.18);
+  pointer-events:none;
+  z-index: 50;
+}
+#hudline{
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 400;
+  color: rgba(140,255,180,0.90);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100vw;
+}
+
+/* --- UNICON: disable old HUD text --- */
+#hud{display:none!important}

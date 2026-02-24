@@ -1,0 +1,14 @@
+from flask import Blueprint, jsonify, request, abort
+
+bp = Blueprint("plugin_guard_internal_btn2_v1", __name__, url_prefix="")
+
+# If anything calls internal /_i/btn2/* endpoints, we WANT to know.
+# We respond 410 Gone (or 404) and log the client.
+@bp.get("/_i/btn2/<path:rest>")
+def guard_i_btn2(rest: str):
+    # 410 makes it obvious this is intentionally retired from public use.
+    return jsonify(ok=False, error="internal_btn2_retired", path=request.path, client=request.remote_addr), 410
+
+@bp.get("/_i/btn/<path:rest>")
+def guard_i_btn(rest: str):
+    return jsonify(ok=False, error="internal_btn_retired", path=request.path, client=request.remote_addr), 410

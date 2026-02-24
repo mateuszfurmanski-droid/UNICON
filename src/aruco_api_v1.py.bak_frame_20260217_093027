@@ -1,0 +1,68 @@
+import time
+from flask import Blueprint, jsonify, request, current_app
+
+aruco_bp = Blueprint("aruco_api_v1", __name__)
+
+def _get_frame_bgr():
+    try:
+        fp = current_app.config.get("UNICON_FRAME_PROVIDER", None)
+        if callable(fp):
+            return fp()
+    except Exception:
+        return None
+    return None
+
+def _detect_aruco(frame_bgr, dict_name: str):
+    try:
+        import cv2
+    except Exception as e:
+        return {"ok": False, "err": f"no_cv2:{e}", "ids": [], "corners": []}
+
+    if frame_bgr is None:
+        return {"ok": False, "err": "no_frame", "ids": [], "corners": []}
+
+    try:
+        aruco = cv2.aruco
+    except Exception:
+        return {"ok": False, "err": "no_cv2_aruco", "ids": [], "corners": []}
+
+    try:
+        d = getattr(aruco, dict_name, None)
+        if d is None:
+            return {"ok": False, "err": f"bad_dict:{dict_name}", "ids": [], "corners": []}
+        aruco_dict = aruco.getPredefinedDictionary(d)
+        params = aruco.DetectorParameters()
+        detector = aruco.ArucoDetector(aruco_dict, params)
+
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = detector.detectMarkers(gray)
+
+        out_ids = []
+        out_corners = []
+        if ids is not None and len(ids) > 0:
+            out_ids = [int(x) for x in ids.flatten().tolist()]
+            # corners: list of (1,4,2) float arrays
+            out_corners = [[[float(p[0]), float(p[1])] for p in c.reshape(-1,2)] for c in corners]
+
+        return {"ok": True, "err": None, "ids": out_ids, "corners": out_corners}
+    except Exception as e:
+        return {"ok": False, "err": f"detect_fail:{type(e).__name__}:{e}", "ids": [], "corners": []}
+
+@aruco_bp.get("/api/aruco/test_v1")
+def aruco_test_v1():
+    dict_name = request.args.get("dict", "DICT_4X4_50")
+    ttl = float(request.args.get("ttl", "0.0") or 0.0)
+
+    # optional tiny wait to allow first frame to land
+    if ttl > 0:
+        t0 = time.time()
+        while time.time() - t0 < ttl:
+            f = _get_frame_bgr()
+            if f is not None:
+                break
+            time.sleep(0.02)
+
+    frame = _get_frame_bgr()
+    res = _detect_aruco(frame, dict_name=dict_name)
+    res.update({"dict": dict_name, "ts": time.time()})
+    return jsonify(res)

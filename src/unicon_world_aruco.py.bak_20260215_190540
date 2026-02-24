@@ -1,0 +1,96 @@
+import os, time
+import numpy as np
+import cv2
+from flask import Blueprint, jsonify
+
+bp_world = Blueprint("unicon_world_aruco_v1", __name__)
+
+DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+PARAMS = cv2.aruco.DetectorParameters()
+DETECTOR = cv2.aruco.ArucoDetector(DICT, PARAMS)
+
+# marker size in meters (default 0.10 = 10cm)
+MARKER_SIZE_M = float(os.environ.get("UNICON_ARUCO_SIZE_M", "0.10"))
+
+# simple pinhole camera defaults; later we calibrate properly
+FX = float(os.environ.get("UNICON_CAM_FX", "800"))
+FY = float(os.environ.get("UNICON_CAM_FY", "800"))
+CX = float(os.environ.get("UNICON_CAM_CX", "320"))
+CY = float(os.environ.get("UNICON_CAM_CY", "240"))
+
+def _camera_matrix():
+    return np.array([[FX, 0, CX],
+                     [0, FY, CY],
+                     [0,  0,  1]], dtype=np.float64)
+
+def _dist_coeffs():
+    # assume none (calibration later)
+    return np.zeros((5,1), dtype=np.float64)
+
+# runtime state (updated by /api/world/aruco/step)
+STATE = {
+    "ok": False,
+    "ts": 0.0,
+    "marker_id": None,
+    "rvec": None,
+    "tvec": None,
+    "note": "call /api/world/aruco/step to process a frame"
+}
+
+def _get_frame_from_main(glb):
+    # try common names in your app; adjust later if needed
+    for k in ("LAST_FRAME_RIGHT", "LAST_FRAME", "FRAME_RIGHT", "_last_frame_right", "last_frame_right"):
+        f = glb.get(k)
+        if isinstance(f, np.ndarray) and f.ndim == 3:
+            return f
+    return None
+
+@bp_world.route("/api/world/aruco/step", methods=["GET"])
+def step():
+    # pull last camera frame from main app globals
+    glb = globals().get("__UNICON_MAIN_GLOBALS__")
+    if not isinstance(glb, dict):
+        return jsonify(ok=False, err="NO_MAIN_GLOBALS"), 500
+
+    frame = _get_frame_from_main(glb)
+    if frame is None:
+        return jsonify(ok=False, err="NO_FRAME_AVAILABLE"), 503
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    corners, ids, _rej = DETECTOR.detectMarkers(gray)
+
+    if ids is None or len(ids) == 0:
+        STATE.update({"ok": False, "ts": time.time(), "marker_id": None, "rvec": None, "tvec": None, "note": "NO_MARKER"})
+        return jsonify(ok=True, state=STATE)
+
+    # take first marker
+    mid = int(ids.flatten()[0])
+    c = corners[0]
+
+    objp = np.array([
+        [-MARKER_SIZE_M/2,  MARKER_SIZE_M/2, 0],
+        [ MARKER_SIZE_M/2,  MARKER_SIZE_M/2, 0],
+        [ MARKER_SIZE_M/2, -MARKER_SIZE_M/2, 0],
+        [-MARKER_SIZE_M/2, -MARKER_SIZE_M/2, 0],
+    ], dtype=np.float64)
+
+    imgp = c.reshape(-1,2).astype(np.float64)
+
+    ok, rvec, tvec = cv2.solvePnP(objp, imgp, _camera_matrix(), _dist_coeffs(), flags=cv2.SOLVEPNP_IPPE_SQUARE)
+    if not ok:
+        STATE.update({"ok": False, "ts": time.time(), "marker_id": mid, "rvec": None, "tvec": None, "note": "SOLVEPNP_FAIL"})
+        return jsonify(ok=True, state=STATE)
+
+    STATE.update({
+        "ok": True,
+        "ts": time.time(),
+        "marker_id": mid,
+        "rvec": rvec.reshape(3).tolist(),
+        "tvec": tvec.reshape(3).tolist(),
+        "note": "OK"
+    })
+    return jsonify(ok=True, state=STATE)
+
+@bp_world.route("/api/world/aruco/state", methods=["GET"])
+def state():
+    return jsonify(ok=True, state=STATE)

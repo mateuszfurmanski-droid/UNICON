@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+import serial
+import time
+import sys
+
+PORT = "/dev/serial0"
+BAUD = 115200
+MIN_STRENGTH = 100      # <<< KLUCZOWE
+READS = 10              # ile poprawnych odczytów
+
+def _read_exact(ser, n, timeout=0.2):
+    buf = bytearray()
+    t0 = time.time()
+    while len(buf) < n:
+        if time.time() - t0 > timeout:
+            raise TimeoutError("Serial timeout while reading exact bytes")
+        chunk = ser.read(n - len(buf))
+        if chunk:
+            buf.extend(chunk)
+    return bytes(buf)
+
+def read_tf_luna_frame(ser):
+    while True:
+        b1 = ser.read(1)
+        if not b1:
+            raise TimeoutError("No data")
+        if b1[0] != 0x59:
+            continue
+
+        b2 = ser.read(1)
+        if not b2:
+            raise TimeoutError("No second header")
+        if b2[0] != 0x59:
+            continue
+
+        payload = _read_exact(ser, 7)
+        frame = bytes([0x59, 0x59]) + payload
+
+        checksum = sum(frame[:8]) & 0xFF
+        if checksum != frame[8]:
+            continue
+
+        dist = frame[2] | (frame[3] << 8)
+        strength = frame[4] | (frame[5] << 8)
+        temp_raw = frame[6] | (frame[7] << 8)
+        temp_c = (temp_raw / 8.0) - 256.0
+
+        return dist, strength, temp_c
+
+def main():
+    ser = serial.Serial(PORT, BAUD, timeout=0.1)
+    good = 0
+
+    print("TF-Luna test (filtered)")
+    print("----------------------")
+
+    try:
+        while good < READS:
+            dist, strength, temp = read_tf_luna_frame(ser)
+
+            if strength < MIN_STRENGTH:
+                continue   # <<< TU ODCINAMY ŚMIECI
+
+            print(f"Distance: {dist} mm | Strength: {strength}")
+            good += 1
+
+    except KeyboardInterrupt:
+        print("STOP")
+    finally:
+        ser.close()
+
+if __name__ == "__main__":
+    main()

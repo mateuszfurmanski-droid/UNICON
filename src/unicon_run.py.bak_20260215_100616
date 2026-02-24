@@ -1,0 +1,25 @@
+import os, sys, importlib.util
+
+TARGET = os.environ.get("UNICON_TARGET_PY", "")
+if not TARGET:
+    TARGET = "/home/pi/UNICON/src/cam_dual_hud_web.py"
+
+spec = importlib.util.spec_from_file_location("unicon_target", TARGET)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)  # type: ignore
+
+app = getattr(m, "app", None)
+if app is None:
+    raise SystemExit("NO_APP_IN_TARGET")
+
+# register /op safely
+try:
+    sys.path.insert(0, os.path.dirname(__file__))
+    from unicon_op_ui import bp_op  # noqa
+    app.register_blueprint(bp_op)
+except Exception as e:
+    print("OP_REGISTER_FAIL:", repr(e), file=sys.stderr)
+
+port = int(os.environ.get("UNICON_PORT", "8095"))
+host = os.environ.get("UNICON_HOST", "0.0.0.0")
+app.run(host=host, port=port, debug=False, threaded=True)

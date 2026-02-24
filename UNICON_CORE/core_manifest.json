@@ -1,0 +1,12 @@
+{
+  "core_version": "v0.1",
+  "generated_at_utc": "2025-12-20T00:00:00Z",
+  "modules": {
+    "style_tokens": "style_tokens.json",
+    "tool_registry": "tool_registry.json",
+    "tool_selector_rules": "tool_selector_rules.json",
+    "snag_schema": "SNAG_DATA_SCHEMA.json",
+    "snag_list_example": "SNAG_LIST_EXAMPLE.json"
+  },
+  "notes": "Universal core pack. No platform-specific code."
+}

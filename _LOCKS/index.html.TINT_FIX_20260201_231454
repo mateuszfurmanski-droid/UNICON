@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UNICON Operate – Live Job</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <!-- Camera background -->
+    <img id="cam" src="/cam.mjpg" alt="cam" />
+
+    <!-- Green tint layer (25%) -->
+    <div id="tint"></div>
+
+    <!-- Overlay canvas for crosshair, ruler, etc. -->
+    <canvas id="overlay"></canvas>
+
+    <!-- Bottom HUD -->
+    <div id="hud">
+      <div id="hudline">boot...</div>
+    </div>
+
+    <!-- Tiny help (toggle later) -->
+    <div id="help">
+      LMB: point A → point B (ruler) | RMB: clear | Wheel: zoom | Drag: pan
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+
+  <!-- UNICON MENU OVERLAY (V1) -->
+  <button id="uniconMenuBtn" type="button" aria-label="menu">MENU</button>
+
+  <div id="uniconMenuShade" class="unicon-menu-shade" hidden></div>
+
+  <div id="uniconMenuPanel" class="unicon-menu-panel" hidden>
+    <div class="unicon-menu-header">
+      <div class="unicon-menu-title">UNICON Menu</div>
+      <button id="uniconMenuClose" type="button" class="unicon-menu-x" aria-label="close">×</button>
+    </div>
+
+    <div class="unicon-menu-buttons">
+      <button class="u-btn" data-action="test_port">TEST 8090</button>
+      <button class="u-btn" data-action="health">GET /health</button>
+      <button class="u-btn" data-action="live_job">GET /api/live_job</button>
+      <button class="u-btn" data-action="debug_imu">Open /debug_imu</button>
+      <button class="u-btn" data-action="cam_mjpg">Open /cam.mjpg</button>
+      <button class="u-btn" data-action="open_root">Open / (HUD)</button>
+      <button class="u-btn" data-action="toggle_overlay">HUD overlay toggle</button>
+    </div>
+
+    <pre id="uniconMenuOut" class="unicon-menu-out">ready.</pre>
+  </div>
+
+  <script src="/static/hud.js"></script>
+</body>
+</html>

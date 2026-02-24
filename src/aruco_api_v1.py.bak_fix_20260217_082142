@@ -1,0 +1,71 @@
+# UNICON_ARUCO_API_V2_NO_HTTP
+# This module must NOT fetch MJPEG via HTTP from the same Flask process (deadlock on dev server).
+# Instead it tries to read a last-frame hook exposed by the main app module, if available.
+
+import time
+import numpy as np
+import cv2
+
+def _get_last_frame_bgr_from_app():
+    # The master app may expose a callable get_last_frame_bgr() or a variable LAST_FRAME_BGR.
+    try:
+        import cam_dual_hud_web as app  # same process import
+    except Exception:
+        return None
+
+    fn = getattr(app, "get_last_frame_bgr", None)
+    if callable(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    frame = getattr(app, "LAST_FRAME_BGR", None)
+    return frame
+
+def _detect_on_frame(frame_bgr, dict_name="DICT_4X4_50"):
+    if frame_bgr is None:
+        return {"ok": False, "err": "no_frame", "ids": [], "corners": []}
+
+    if not hasattr(cv2, "aruco"):
+        return {"ok": False, "err": "no_cv2_aruco", "ids": [], "corners": []}
+
+    try:
+        d = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_4X4_50)
+        dct = cv2.aruco.getPredefinedDictionary(d)
+        params = cv2.aruco.DetectorParameters()
+        det = cv2.aruco.ArucoDetector(dct, params) if hasattr(cv2.aruco, "ArucoDetector") else None
+
+        if det is not None:
+            corners, ids, _ = det.detectMarkers(frame_bgr)
+        else:
+            corners, ids, _ = cv2.aruco.detectMarkers(frame_bgr, dct, parameters=params)
+
+        if ids is None or len(ids) == 0:
+            return {"ok": True, "err": "", "ids": [], "corners": []}
+
+        norm=[]
+        for c in corners:
+            arr = np.array(c, dtype=np.float32)
+            if arr.ndim == 3:
+                arr = arr.reshape(-1,2)
+            if arr.shape[0] >= 4:
+                arr = arr[:4]
+            norm.append(arr.tolist())
+
+        return {"ok": True, "err": "", "ids": [int(x) for x in ids.flatten().tolist()], "corners": norm}
+    except Exception as e:
+        return {"ok": False, "err": str(e), "ids": [], "corners": []}
+
+def register_aruco_api(app):
+    # Expected by master to mount endpoints
+    from flask import request, jsonify
+
+    @app.get("/api/aruco/test_v1")
+    def aruco_test_v1():
+        dict_name = request.args.get("dict", "DICT_4X4_50")
+        frame = _get_last_frame_bgr_from_app()
+        res = _detect_on_frame(frame, dict_name=dict_name)
+        res["dict"] = dict_name
+        res["ts"] = time.time()
+        return jsonify(res)

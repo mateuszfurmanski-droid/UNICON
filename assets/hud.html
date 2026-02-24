@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UNICON HUD v0.1</title>
+<style>
+    body {
+        margin: 0;
+        background: black;
+        color: #00ffcc;
+        font-family: monospace;
+    }
+    .hud {
+        padding: 20px;
+        font-size: 22px;
+    }
+    .value {
+        font-size: 40px;
+        margin-bottom: 10px;
+    }
+    .label {
+        color: #66ffee;
+    }
+    .warn {
+        color: #ff5555;
+    }
+</style>
+</head>
+<body>
+
+<div class="hud">
+    <div class="label">DISTANCE</div>
+    <div class="value" id="distance">---</div>
+
+    <div class="label">STRENGTH</div>
+    <div class="value" id="strength">---</div>
+
+    <div class="label">TEMP</div>
+    <div class="value" id="temp">---</div>
+
+    <div class="label">IMU</div>
+    <div class="value" id="imu">---</div>
+</div>
+
+<script>
+async function updateHUD() {
+    try {
+        const res = await fetch("/sensors");
+        const data = await res.json();
+
+        if (data.lidar) {
+            document.getElementById("distance").textContent =
+                data.lidar.distance_cm + " cm";
+            document.getElementById("strength").textContent =
+                data.lidar.strength;
+            document.getElementById("temp").textContent =
+                data.lidar.temp_c + " °C";
+        }
+
+        if (data.imu) {
+            document.getElementById("imu").textContent =
+                data.imu.whoami;
+        }
+
+    } catch (e) {
+        document.getElementById("distance").textContent = "NO DATA";
+        document.getElementById("distance").className = "value warn";
+    }
+}
+
+setInterval(updateHUD, 200);
+updateHUD();
+</script>
+
+</body>
+</html>

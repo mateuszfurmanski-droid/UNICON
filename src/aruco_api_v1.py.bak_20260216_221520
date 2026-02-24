@@ -1,0 +1,45 @@
+from flask import Blueprint, jsonify, request
+import cv2
+
+aruco_bp = Blueprint("aruco_bp", __name__)
+
+def _detect_once(dev="/dev/video2", w=1280, h=720, fourcc="MJPG", dict_name="DICT_4X4_50"):
+    d = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_4X4_50)
+    dictionary = cv2.aruco.getPredefinedDictionary(d)
+    params = cv2.aruco.DetectorParameters()
+
+    cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(w))
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(h))
+
+    ok, frame = cap.read()
+    cap.release()
+
+    if not ok or frame is None:
+        return {"ok": False, "error": f"no_frame dev={dev} fourcc={fourcc} {w}x{h}"}
+
+    det = cv2.aruco.ArucoDetector(dictionary, params)
+    corners, ids, _ = det.detectMarkers(frame)
+
+    ids_list = [] if ids is None else [int(x) for x in ids.flatten().tolist()]
+    return {
+        "ok": True,
+        "dev": dev,
+        "size": [int(frame.shape[1]), int(frame.shape[0])],
+        "markers": int(0 if ids is None else len(ids_list)),
+        "ids": ids_list,
+    }
+
+@aruco_bp.get("/api/aruco/test_v1")
+def aruco_test_v1():
+    dev = request.args.get("dev", "/dev/video2")
+    w = int(request.args.get("w", "1280"))
+    h = int(request.args.get("h", "720"))
+    fourcc = request.args.get("fourcc", "MJPG")
+    dict_name = request.args.get("dict", "DICT_4X4_50")
+    return jsonify(_detect_once(dev=dev, w=w, h=h, fourcc=fourcc, dict_name=dict_name))
+
+@aruco_bp.get("/api/aruco/state_v1")
+def aruco_state_v1():
+    return jsonify({"ok": True, "endpoints": ["/api/aruco/test_v1", "/api/aruco/state_v1"]})

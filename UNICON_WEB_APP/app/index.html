@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UNICON Web Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">UNICON</div>
+    <div class="meta" id="metaLine">DEMO</div>
+    <div class="hint">Tap: pin</div>
+  </header>
+
+  <main class="stage">
+    <video id="cam" autoplay playsinline muted></video>
+    <canvas id="hud"></canvas>
+
+    <div class="bottombar">
+      <button id="btnPin">PIN</button>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

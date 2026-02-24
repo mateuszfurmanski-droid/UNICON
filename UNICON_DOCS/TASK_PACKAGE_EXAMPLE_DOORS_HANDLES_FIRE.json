@@ -1,0 +1,155 @@
+{
+  "package_version": "v0.1",
+  "package_id": "pkg-joinery-doors-001",
+  "assigned_by": {
+    "role": "MANAGER",
+    "name": "Site Manager"
+  },
+  "assigned_to": {
+    "role": "INSTALLER",
+    "name": "Mateusz"
+  },
+  "project": {
+    "project_id": "proj-001",
+    "project_name": "Flat refurbishment"
+  },
+  "created_at_utc": "2025-12-20T11:30:00Z",
+  "status": "TODO",
+  "summary": "Install 2 doors, fit 4 handles, verify fire door signage.",
+  "tasks": [
+    {
+      "task_id": "task-door-1",
+      "title": "Install Door 1",
+      "location": {
+        "room_name": "Bedroom 1",
+        "location_note": "Main doorway"
+      },
+      "required_steps": [
+        {
+          "step_id": "door1-frame",
+          "type": "MEASURE",
+          "issue_type": "FRAME",
+          "tool_id": "32",
+          "tool_name": "FRAME PLUMB 3D",
+          "must_pass": true
+        },
+        {
+          "step_id": "door1-gaps",
+          "type": "MEASURE",
+          "issue_type": "GAPS",
+          "tool_id": "34",
+          "tool_name": "DOOR GAP TOLERANCE",
+          "must_pass": true,
+          "standards": {
+            "gap_around_mm_target": 3.0,
+            "bottom_gap_mm_max": 8.0
+          }
+        },
+        {
+          "step_id": "door1-hinge",
+          "type": "CHECK",
+          "issue_type": "HINGE",
+          "tool_id": "35",
+          "tool_name": "HINGE LOAD CHECK",
+          "must_pass": false,
+          "notes": "Optional if door is stable and gaps are consistent."
+        }
+      ],
+      "status": "TODO",
+      "evidence_required": true
+    },
+    {
+      "task_id": "task-door-2",
+      "title": "Install Door 2",
+      "location": {
+        "room_name": "Bedroom 2",
+        "location_note": "Main doorway"
+      },
+      "required_steps": [
+        {
+          "step_id": "door2-frame",
+          "type": "MEASURE",
+          "issue_type": "FRAME",
+          "tool_id": "32",
+          "tool_name": "FRAME PLUMB 3D",
+          "must_pass": true
+        },
+        {
+          "step_id": "door2-gaps",
+          "type": "MEASURE",
+          "issue_type": "GAPS",
+          "tool_id": "34",
+          "tool_name": "DOOR GAP TOLERANCE",
+          "must_pass": true,
+          "standards": {
+            "gap_around_mm_target": 3.0,
+            "bottom_gap_mm_max": 8.0
+          }
+        },
+        {
+          "step_id": "door2-hinge",
+          "type": "CHECK",
+          "issue_type": "HINGE",
+          "tool_id": "35",
+          "tool_name": "HINGE LOAD CHECK",
+          "must_pass": false,
+          "notes": "Optional if door is stable and gaps are consistent."
+        }
+      ],
+      "status": "TODO",
+      "evidence_required": true
+    },
+    {
+      "task_id": "task-handles",
+      "title": "Fit 4 handles (set height consistent)",
+      "location": {
+        "room_name": "Various",
+        "location_note": "All new doors"
+      },
+      "required_steps": [
+        {
+          "step_id": "handles-confirm",
+          "type": "CHECK",
+          "issue_type": "CUT",
+          "tool_id": "33",
+          "tool_name": "CUT MITRE SAW",
+          "must_pass": false,
+          "notes": "In MVP: use this as generic 'measure/confirm' tool placeholder for handle height consistency."
+        }
+      ],
+      "status": "TODO",
+      "evidence_required": true,
+      "targets": {
+        "handle_count": 4,
+        "handle_height_mm_reference": 0
+      }
+    },
+    {
+      "task_id": "task-fire-signage",
+      "title": "Fire Door signage (KEEP SHUT)",
+      "location": {
+        "room_name": "As required",
+        "location_note": "Fire doors only"
+      },
+      "required_steps": [
+        {
+          "step_id": "signage-photo",
+          "type": "CHECK",
+          "issue_type": "FINAL",
+          "tool_id": "36",
+          "tool_name": "FINAL CLIENT CHECK",
+          "must_pass": true,
+          "notes": "In MVP: treated as compliance verification with photo evidence."
+        }
+      ],
+      "status": "TODO",
+      "evidence_required": true,
+      "targets": {
+        "sign_text": "FIRE DOOR KEEP SHUT",
+        "min_count": 1
+      }
+    }
+  ],
+  "completion_rule": "PACKAGE_DONE_WHEN_ALL_MUST_PASS_STEPS_GREEN",
+  "notes": "Installer sees ONLY this package and its tasks. Manager can review evidence per step."
+}

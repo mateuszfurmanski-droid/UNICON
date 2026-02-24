@@ -1,0 +1,23 @@
+{
+  "sensor": "ICM20948",
+  "i2c_address": "0x68",
+  "sample_hz": 100,
+  "duration_s": 15,
+  "gravity_assumed_m_s2": 9.80665,
+  "gyro_bias": {
+    "gx_rad_s": -0.008831455078829518,
+    "gy_rad_s": 0.017017893293709924,
+    "gz_rad_s": -0.016920545664559798
+  },
+  "acc_mean_at_rest": {
+    "ax_m_s2": -0.20034200651855466,
+    "ay_m_s2": -0.20040106349283854,
+    "az_m_s2": 10.03831774104004
+  },
+  "acc_offset": {
+    "ax_m_s2": -0.20034200651855466,
+    "ay_m_s2": -0.20040106349283854,
+    "az_m_s2": 0.23166774104003984
+  },
+  "notes": "Gyro bias: subtract from gyro. Acc offset: subtract from accel to get ~[0,0,+g] at rest (flat)."
+}

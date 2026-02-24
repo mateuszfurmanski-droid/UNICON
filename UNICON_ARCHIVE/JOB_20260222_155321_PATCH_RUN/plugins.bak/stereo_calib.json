@@ -1,0 +1,10 @@
+{
+  "baseline_m": 0.06,
+  "fx_px": 700.0,
+  "fy_px": 700.0,
+  "cx_px": 320.0,
+  "cy_px": 240.0,
+  "search_px": 140,
+  "patch_px": 15,
+  "min_disp_px": 2
+}

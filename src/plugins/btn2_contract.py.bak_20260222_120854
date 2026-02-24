@@ -1,0 +1,19 @@
+from flask import Blueprint, current_app
+
+bp = Blueprint("plugin_btn2_contract_v1", __name__)
+
+@bp.record_once
+def setup(state):
+    app = state.app
+    # Bind internal endpoints once at startup
+    state_fn = app.view_functions.get("ruler_bp.btn2_state") or app.view_functions.get("api_btn2_state")
+    set_fn = app.view_functions.get("ruler_bp.btn2_reset") or app.view_functions.get("api_btn2")
+
+    if state_fn:
+        app.config["BTN2_STATE_FN"] = state_fn
+    if set_fn:
+        app.config["BTN2_SET_FN"] = set_fn
+
+    print("BTN2_CONTRACT_BOUND",
+          bool(app.config.get("BTN2_STATE_FN")),
+          bool(app.config.get("BTN2_SET_FN")))

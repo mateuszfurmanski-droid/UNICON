@@ -1,0 +1,4 @@
+MainPID=0
+ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /home/pi/UNICON/src/unicon_run.py ; ignore_errors=no ; start_time=[Sun 2026-02-22 03:09:56 GMT] ; stop_time=[Sun 2026-02-22 03:11:07 GMT] ; pid=22670 ; code=killed ; status=15/TERM }
+FragmentPath=/etc/systemd/system/unicon-master.service
+ActiveEnterTimestamp=Sun 2026-02-22 03:09:56 GMT

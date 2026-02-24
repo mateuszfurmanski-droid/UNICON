@@ -1,0 +1,182 @@
+(function () {
+  const hud = document.createElement('div');
+  hud.id = 'hud-gold-v1';
+  hud.style.cssText = `
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #eab308;
+    font-family: monospace;
+    font-size: 14px;
+    background: rgba(0,0,0,0.45);
+    padding: 6px 10px;
+    border: 1px solid #eab308;
+    border-radius: 6px;
+    z-index: 9999;
+  `;
+  hud.textContent = 'HUD INIT';
+  document.body.appendChild(hud);
+
+  async function tick() {
+    try {
+      const r = await fetch('/health');
+      const j = await r.json();
+      const L = j.latest || {};
+      hud.textContent =
+        `L:${(L.dist_cm||0).toFixed(1)}cm ` +
+        `P:${(L.pitch||0).toFixed(2)}° ` +
+        `R:${(L.roll||0).toFixed(2)}°`;
+    } catch (e) {
+      hud.textContent = 'HUD ERR';
+    }
+  }
+
+  setInterval(tick, 200);
+})();
+
+// === UNICON FORCE LIVE (DEV MODE) ===
+setInterval(async () => {
+  try {
+    const r = await fetch('/health', { cache: 'no-store' });
+    const j = await r.json();
+    if (j && j.ok === true) {
+      if (window.HUD_STATE === 'boot') {
+        console.log('[HUD] force LIVE');
+        window.HUD_STATE = 'live';
+      }
+    }
+  } catch (e) {}
+}, 500);
+
+
+// === UNICON HUD LEVEL FIX BEGIN ===
+(() => {
+  if (window.__UNICON_HUD_LEVEL_FIX_INSTALLED) return;
+  window.__UNICON_HUD_LEVEL_FIX_INSTALLED = true;
+
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+  let last = { ok:false, roll:0, pitch:0 };
+  async function poll() {
+    try {
+      const r = await fetch('/health', { cache:'no-store' });
+      const j = await r.json();
+      last.ok = !!j?.ok;
+      last.roll  = Number(j?.latest?.roll  ?? 0);
+      last.pitch = Number(j?.latest?.pitch ?? 0);
+    } catch (e) {
+      last.ok = false;
+    }
+  }
+  setInterval(poll, 150);
+  poll();
+
+  // 1) ZABIJ "boot..." KIEDY HEALTH OK
+  function killBootIfOk() {
+    if (!last.ok) return;
+    const nodes = document.querySelectorAll('div,span,p');
+    for (const n of nodes) {
+      const t = (n.textContent || '').trim().toLowerCase();
+      if (t === 'boot...' || t === 'boot..' || t === 'boot.') {
+        n.style.display = 'none';
+      }
+    }
+  }
+  setInterval(killBootIfOk, 200);
+
+  // 2) POZIOMICA OVERLAY (na wierzchu)
+  const wrap = document.createElement('div');
+  wrap.id = 'unicon-level';
+  wrap.style.position = 'fixed';
+  wrap.style.left = '50%';
+  wrap.style.bottom = '14px';
+  wrap.style.transform = 'translateX(-50%)';
+  wrap.style.zIndex = '999999';
+  wrap.style.pointerEvents = 'none';
+  wrap.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+  wrap.style.color = 'rgba(120,255,160,0.95)';
+  wrap.style.textShadow = '0 0 10px rgba(120,255,160,0.35)';
+
+  const bar = document.createElement('div');
+  bar.style.width = '340px';
+  bar.style.height = '44px';
+  bar.style.border = '1px solid rgba(120,255,160,0.45)';
+  bar.style.borderRadius = '14px';
+  bar.style.background = 'rgba(0,0,0,0.30)';
+  bar.style.backdropFilter = 'blur(2px)';
+  bar.style.position = 'relative';
+  bar.style.boxShadow = '0 0 18px rgba(120,255,160,0.12) inset';
+
+  const mid = document.createElement('div');
+  mid.style.position = 'absolute';
+  mid.style.left = '50%';
+  mid.style.top = '8px';
+  mid.style.width = '2px';
+  mid.style.height = '28px';
+  mid.style.transform = 'translateX(-50%)';
+  mid.style.background = 'rgba(120,255,160,0.35)';
+  bar.appendChild(mid);
+
+  const line = document.createElement('div');
+  line.style.position = 'absolute';
+  line.style.left = '10px';
+  line.style.right = '10px';
+  line.style.top = '22px';
+  line.style.height = '2px';
+  line.style.background = 'rgba(120,255,160,0.12)';
+  bar.appendChild(line);
+
+  const bubble = document.createElement('div');
+  bubble.style.position = 'absolute';
+  bubble.style.top = '10px';
+  bubble.style.left = '50%';
+  bubble.style.width = '24px';
+  bubble.style.height = '24px';
+  bubble.style.borderRadius = '999px';
+  bubble.style.transform = 'translateX(-50%)';
+  bubble.style.border = '1px solid rgba(120,255,160,0.65)';
+  bubble.style.background = 'rgba(120,255,160,0.10)';
+  bubble.style.boxShadow = '0 0 14px rgba(120,255,160,0.25)';
+  bar.appendChild(bubble);
+
+  const dot = document.createElement('div');
+  dot.style.position = 'absolute';
+  dot.style.left = '50%';
+  dot.style.top = '50%';
+  dot.style.width = '6px';
+  dot.style.height = '6px';
+  dot.style.borderRadius = '999px';
+  dot.style.transform = 'translate(-50%,-50%)';
+  dot.style.background = 'rgba(120,255,160,0.90)';
+  dot.style.boxShadow = '0 0 10px rgba(120,255,160,0.55)';
+  bubble.appendChild(dot);
+
+  const txt = document.createElement('div');
+  txt.style.marginTop = '6px';
+  txt.style.textAlign = 'center';
+  txt.style.fontSize = '12px';
+  txt.textContent = 'LEVEL: boot...';
+  wrap.appendChild(bar);
+  wrap.appendChild(txt);
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.appendChild(wrap);
+  });
+  if (document.readyState !== 'loading') {
+    document.body.appendChild(wrap);
+  }
+
+  function draw() {
+    // roll: przesunięcie bąbelka
+    const maxPx = 120;
+    const x = clamp((last.roll / 30) * maxPx, -maxPx, maxPx);
+    bubble.style.left = `calc(50% + ${x}px)`;
+
+    txt.textContent = `LEVEL ${last.ok ? 'OK' : 'NO'} | R:${last.roll.toFixed(2)} P:${last.pitch.toFixed(2)}`;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+// === UNICON HUD LEVEL FIX END ===
+

@@ -1,0 +1,162 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  height: 100%;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+}
+
+#stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+
+#cam {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: 0 0; /* pan/zoom in JS */
+}
+
+#tint {
+  display: none !important;
+
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 255, 0, 0.10); /* ~10% now; can bump to 25% */
+  pointer-events: none;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* mouse handled by stage */
+}
+
+#hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.35);
+  color: #7CFF7C;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#help {
+  position: absolute;
+  left: 12px;
+  bottom: 44px;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.25);
+  color: #7CFF7C;
+  font-size: 12px;
+  border-radius: 6px;
+  user-select: none;
+}
+
+
+/* UNICON MENU OVERLAY (V1) */
+#uniconMenuBtn{
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 9999;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(80,255,140,.35);
+  background: rgba(0,0,0,.65);
+  color: rgba(170,255,200,.95);
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+.unicon-menu-shade{
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0,0,0,.0); /* click-catcher only */
+}
+
+.unicon-menu-panel{
+  position: fixed;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 10001;
+  width: min(820px, calc(100vw - 24px));
+  border-radius: 16px;
+  border: 1px solid rgba(80,255,140,.35);
+  background: rgba(0,20,0,.10); /* ~10% green shade */
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.55);
+  overflow: hidden;
+}
+
+.unicon-menu-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(80,255,140,.25);
+}
+
+.unicon-menu-title{
+  font-weight: 800;
+  color: rgba(190,255,210,.95);
+}
+
+.unicon-menu-x{
+  border: 1px solid rgba(80,255,140,.35);
+  background: rgba(0,0,0,.35);
+  color: rgba(190,255,210,.95);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.unicon-menu-buttons{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.unicon-menu-buttons .u-btn{
+  border: 1px solid rgba(80,255,140,.35);
+  background: rgba(0,0,0,.35);
+  color: rgba(190,255,210,.95);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 700;
+}
+
+.unicon-menu-out{
+  margin: 0;
+  padding: 12px 14px 16px 14px;
+  border-top: 1px solid rgba(80,255,140,.25);
+  min-height: 120px;
+  color: rgba(190,255,210,.95);
+  background: rgba(0,0,0,.35);
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 40vh;
+}
+
+
+/* UNICON: disable green tint layer */
+#tint{display:none !important;}

@@ -1,0 +1,967 @@
+#!/usr/bin/env python3
+# UNICON Operate V1: Camera (MJPEG) + IMU (ICM20948 accel tilt) + LiDAR (TF-Luna) + LIVE JOB (multi-measure + autosave JSON)
+
+import os
+import json
+from flask import request, send_from_directory, render_template_string
+import time
+import math
+import threading
+
+import cv2
+import serial
+import smbus
+from flask import Flask, Response, jsonify, request, render_template
+# ======================
+# CONFIG
+# ======================
+HOST = "0.0.0.0"
+PORT = 8090
+DATA_DIR = os.path.expanduser("~/UNICON/data")
+LIVE_JOB_PATH = os.path.join(DATA_DIR, "live_job.json")
+
+VIDEO_DEV = "/dev/video2"
+VIDEO_DEV2 = "/dev/video0"
+
+# TF-Luna (Pi UART)
+LIDAR_PORT = "/dev/serial0"
+LIDAR_BAUD = 115200
+
+# IMU I2C (ICM20948 often at 0x68)
+IMU_ENABLED = True
+IMU_I2C_BUS = 1
+IMU_ADDR = 0x68
+
+# Camera defaults (MJPG helps with green screen on many UVC cams)
+CAM_WIDTH = 640
+CAM_HEIGHT = 480
+CAM_FPS = 15
+FORCE_MJPG = True
+
+OVERLAY_COLOR = (0, 255, 0)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+DATA_DIR = "/home/pi/UNICON/data"
+JOB_FILE = os.path.join(DATA_DIR, "live_job.json")
+
+# ======================
+# STATE
+# ======================
+app = Flask(__name__)
+
+state_lock = threading.Lock()
+job_lock = threading.Lock()
+
+status = {
+    "boot_ts": time.time(),
+    "errors": [],
+    "video_ok": False,
+    "imu_ok": False,
+    "lidar_ok": False,
+}
+
+latest = {
+    "ts": None,
+    "dist_cm": None,
+    "strength": None,
+    "temp_c": None,
+    "roll": None,
+    "pitch": None,
+    "fps": None,
+}
+
+job = {
+    "version": 1,
+    "created_ts": time.time(),
+    "updated_ts": time.time(),
+    "measurements": [],  # list of {id, ts, a:{x,y}, b:{x,y}, label}
+    "next_id": 1
+}
+
+def set_error(tag, e):
+    msg = f"{tag}: {repr(e)}"
+    status["errors"].append(msg)
+    status["errors"] = status["errors"][-30:]
+job_lock = threading.Lock()
+
+def ensure_live_job():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(LIVE_JOB_PATH):
+        base = {"job_id": "live", "measures": [], "updated_ts": time.time()}
+        with open(LIVE_JOB_PATH, "w") as f:
+            json.dump(base, f)
+
+def load_live_job():
+    ensure_live_job()
+    try:
+        with open(LIVE_JOB_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"job_id": "live", "measures": [], "updated_ts": time.time()}
+
+def save_live_job(obj):
+    ensure_live_job()
+    obj["updated_ts"] = time.time()
+    tmp = LIVE_JOB_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, LIVE_JOB_PATH)
+
+
+# ======================
+# JOB: autosave / autoload
+# ======================
+def job_save():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with job_lock:
+        job["updated_ts"] = time.time()
+        tmp = JOB_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, JOB_FILE)
+
+def job_load():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(JOB_FILE):
+        job_save()
+        return
+    try:
+        with open(JOB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        with job_lock:
+            job.clear()
+            job.update(data)
+            # sanity:
+            if "measurements" not in job: job["measurements"] = []
+            if "next_id" not in job: job["next_id"] = 1
+            if "version" not in job: job["version"] = 1
+            if "created_ts" not in job: job["created_ts"] = time.time()
+            job["updated_ts"] = time.time()
+        job_save()
+    except Exception as e:
+        set_error("job_load", e)
+        # fallback to empty
+        with job_lock:
+            job["measurements"] = []
+            job["next_id"] = 1
+            job["updated_ts"] = time.time()
+        job_save()
+
+
+# ======================
+# LiDAR (TF-Luna) parsing
+# ======================
+def read_exact(ser, n):
+    buf = bytearray()
+    while len(buf) < n:
+        b = ser.read(n - len(buf))
+        if not b:
+            return None
+        buf.extend(b)
+    return bytes(buf)
+
+def lidar_loop():
+    ser = None
+    while True:
+        try:
+            ser = serial.Serial(LIDAR_PORT, LIDAR_BAUD, timeout=0.2)
+            time.sleep(0.2)
+            status["lidar_ok"] = True
+
+            while True:
+                b1 = ser.read(1)
+                if not b1 or b1[0] != 0x59:
+                    pass
+                b2 = ser.read(1)
+                if not b2 or b2[0] != 0x59:
+                    pass
+
+                payload = read_exact(ser, 7)
+                if not payload:
+                    pass
+
+                frame = b"\x59\x59" + payload
+                if (sum(frame[:8]) & 0xFF) != frame[8]:
+                    pass
+
+                dist = frame[2] | (frame[3] << 8)  # TF-Luna typically reports distance in cm
+                strength = frame[4] | (frame[5] << 8)
+                temp = (frame[6] | (frame[7] << 8)) / 8.0 - 256.0
+
+                with state_lock:
+                    latest["ts"] = time.time()
+                    latest["dist_cm"] = float(dist)
+                    latest["strength"] = int(strength)
+                    latest["temp_c"] = round(temp, 1)
+                    status["lidar_ok"] = True
+
+        except Exception as e:
+            status["lidar_ok"] = False
+            set_error("lidar_loop", e)
+            try:
+                if ser:
+                    ser.close()
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+
+# ======================
+# IMU (ICM-20948 accel only -> roll/pitch)
+# ======================
+REG_BANK_SEL = 0x7F
+PWR_MGMT_1 = 0x06
+PWR_MGMT_2 = 0x07
+ACCEL_XOUT_H = 0x2D
+
+def i16(h, l):
+    v = (h << 8) | l
+    return v - 65536 if (v & 0x8000) else v
+
+def imu_select_bank(bus, b):
+    bus.write_byte_data(IMU_ADDR, REG_BANK_SEL, (b & 3) << 4)
+    time.sleep(0.002)
+
+def imu_read6(bus, reg):
+    d = bus.read_i2c_block_data(IMU_ADDR, reg, 6)
+    ax = i16(d[0], d[1])
+    ay = i16(d[2], d[3])
+    az = i16(d[4], d[5])
+    return ax, ay, az
+
+def imu_loop():
+    if not IMU_ENABLED:
+        return
+
+    try:
+        bus = smbus.SMBus(IMU_I2C_BUS)
+        imu_select_bank(bus, 0)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_1, 0x01)
+        time.sleep(0.05)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_2, 0x00)
+        time.sleep(0.05)
+        status["imu_ok"] = True
+    except Exception as e:
+        status["imu_ok"] = False
+        set_error("imu_init", e)
+        return
+
+    while True:
+        try:
+            imu_select_bank(bus, 0)
+            ax, ay, az = imu_read6(bus, ACCEL_XOUT_H)
+
+            roll = math.degrees(math.atan2(ay, az))
+            pitch = math.degrees(math.atan2(-ax, math.sqrt(ay * ay + az * az)))
+
+            with state_lock:
+                latest["roll"] = round(roll, 2)
+                latest["pitch"] = round(pitch, 2)
+                status["imu_ok"] = True
+
+            time.sleep(0.05)
+
+        except Exception as e:
+            status["imu_ok"] = False
+            set_error("imu_loop", e)
+            time.sleep(0.25)
+
+
+# ======================
+# CAMERA STREAM (MJPEG)
+# ======================
+def camera_open():
+    cap = cv2.VideoCapture(VIDEO_DEV, cv2.CAP_V4L2)
+    if FORCE_MJPG:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
+    time.sleep(0.2)
+    return cap
+
+def mjpeg_frames():
+    cap = camera_open()
+
+    t0 = time.time()
+    frames = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            status["video_ok"] = False
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.2)
+            cap = camera_open()
+            pass
+
+        status["video_ok"] = True
+
+        frames += 1
+        t1 = time.time()
+        if t1 - t0 >= 1.0:
+            with state_lock:
+                latest["fps"] = round(frames / (t1 - t0), 1)
+            t0 = t1
+            frames = 0
+
+        # Light overlay: crosshair + roll line + bottom text
+        h, w = frame.shape[:2]
+        cx, cy = w // 2, h // 2
+
+        cv2.drawMarker(frame, (cx, cy), OVERLAY_COLOR, cv2.MARKER_CROSS, 28, 2)
+
+        with state_lock:
+            roll = latest.get("roll")
+            pitch = latest.get("pitch")
+            dist = latest.get("dist_cm")
+            strength = latest.get("strength")
+            temp = latest.get("temp_c")
+            fps = latest.get("fps")
+
+        if roll is not None:
+            ang = math.radians(roll)
+            L = int(min(w, h) * 0.35)
+            x1 = int(cx - L * math.cos(ang))
+            y1 = int(cy - L * math.sin(ang))
+            x2 = int(cx + L * math.cos(ang))
+            y2 = int(cy + L * math.sin(ang))
+            cv2.line(frame, (x1, y1), (x2, y2), OVERLAY_COLOR, 2)
+          # text overlay disabled
+        ret, jpg = cv2.imencode(".jpg", frame)
+        if not ret:
+            pass
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+
+
+# ======================
+# WEB UI (single page)
+# ======================
+INDEX_HTML = r"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <title>UNICON Operate – Live Job</title>
+  <style>
+    html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+    #wrap { position:fixed; inset:0; background:#000; }
+    #stage {
+      position:absolute; inset:0;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+    #cam {
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      object-fit: cover;
+      filter: saturate(1.05) contrast(1.05);
+    }
+    #glass {
+      position:absolute; inset:0;
+      pointer-events:none;
+      background: rgba(0,255,0,0.12); /* tinted 8% green - możesz zwiększyć */
+      mix-blend-mode: screen;
+    }
+    #ui {
+      position:absolute; inset:0;
+      pointer-events:auto;
+      touch-action:none;
+    }
+    #hud {
+      position:absolute; left:0; right:0; bottom:0;
+      padding:8px 10px;
+      font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: rgba(0,255,0,0.95);
+      background: rgba(0,0,0,0.35);
+      border-top: 1px solid rgba(0,255,0,0.25);
+      white-space: nowrap;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      pointer-events:none;
+    }
+    #hint {
+      position:absolute; left:10px; top:10px;
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: rgba(0,255,0,0.85);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(0,255,0,0.25);
+      padding:6px 8px;
+      border-radius: 8px;
+      pointer-events:none;
+    }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <img id="cam" src="/cam.mjpg" alt="cam"/>
+    <div id="glass"></div>
+    <canvas id="ui"></canvas>
+    <div id="hint">LMB: point → point (add) | ALT+LMB: delete nearest | Wheel: zoom | Auto-save JSON</div>
+    <div id="hud">boot…</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('ui');
+  const ctx = canvas.getContext('2d');
+  const hud = document.getElementById('hud');
+  const stage = document.getElementById('stage');
+
+  let W=0, H=0;
+  function resize(){
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // zoom (stage)
+  let zoom = 1.0;
+  function applyZoom(){ stage.style.transform = `scale(${zoom})`; }
+  applyZoom();
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const dz = (e.deltaY < 0) ? 0.08 : -0.08;
+    zoom = Math.min(2.5, Math.max(0.6, zoom + dz));
+    applyZoom();
+  }, {passive:false});
+
+  // job state
+  let measures = [];
+  let p1 = null;
+
+  // IMU cache
+  let imuRoll = 0;
+  let imuPitch = 0;
+
+  
+// ===== IMU SNAP + ZERO (persist) =====
+let levelSnapOn = (localStorage.getItem('levelSnapOn') === '1'); // default false
+const SNAP_ON_DEG  = 0.20;  // enter snap  (±0.20°)
+const SNAP_OFF_DEG = 0.35;  // exit snap   (±0.35°)
+let rollZero  = parseFloat(localStorage.getItem('rollZero')  || '0');
+let pitchZero = parseFloat(localStorage.getItem('pitchZero') || '0');
+
+let _snapActive = false;   // internal
+let lastRawRoll = 0;
+let lastRawPitch = 0;
+function linePointDistance(px,py, ax,ay, bx,by){
+    const ABx = bx-ax, ABy = by-ay;
+    const APx = px-ax, APy = py-ay;
+    const ab2 = ABx*ABx + ABy*ABy;
+    let t = 0;
+    if (ab2 > 1e-6) t = (APx*ABx + APy*ABy)/ab2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t*ABx, cy = ay + t*ABy;
+    const dx = px - cx, dy = py - cy;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  async function apiGet(url){ const r = await fetch(url); return await r.json(); }
+  async function apiPost(url, body){
+    const r = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body || {})
+    });
+    return await r.json();
+  }
+
+  async function refreshJob(){
+    const j = await apiGet('/api/job');
+    measures = j.measurements || [];
+    draw();
+  }
+
+  async function addMeasure(a,b){
+    const r = await apiPost('/api/job/add', {a,b});
+    measures = r.measurements || measures;
+    draw();
+  }
+
+  async function deleteNearest(x,y){
+    if (!measures.length) return;
+    let best = {id:null, d:1e9};
+    for (const m of measures){
+
+    // === DEPTH FEELING ===
+    // window.lastLunaCm musi być ustawiane w tick()/fetch
+    let depthCm = (window.lastLunaCm || 200);
+    let depthNorm = Math.max(40, Math.min(400, depthCm));
+    let depthFactor = 1.0 - (depthNorm - 40) / 360; // 0..1
+    ctx.lineWidth = 1.5 + depthFactor * 3.5;
+    ctx.globalAlpha = 0.45 + depthFactor * 0.55;
+          const d = linePointDistance(x,y, m.a.x,m.a.y, m.b.x,m.b.y);
+      if (d < best.d) best = {id:m.id, d};
+    }
+    if (best.id !== null && best.d < 18){
+      const r = await apiPost('/api/job/delete', {id: best.id});
+      measures = r.measurements || measures;
+      draw();
+    }
+  }
+
+  
+// === IMU LEVEL (overlay) ===
+function drawIMULevel(ctx, W, H, roll){
+  const cx = W/2, cy = H/2;
+  const scale = 18; // px per degree
+  const dx = Math.max(-250, Math.min(250, roll * scale));
+
+  let col = 'rgba(0,255,0,0.9)';
+  const a = Math.abs(roll);
+  if (a > 0.3) col = 'rgba(255,255,0,0.9)';
+  if (a > 1.0) col = 'rgba(255,80,80,0.95)';
+
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 3;
+
+  // linia poziomu
+  ctx.beginPath();
+  ctx.moveTo(cx-180, cy);
+  ctx.lineTo(cx+180, cy);
+  ctx.stroke();
+
+  // bąbelek
+  ctx.beginPath();
+  ctx.arc(cx+dx, cy, 10, 0, Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  window.lastLunaCm = 80; // TEST: blisko
+
+    ctx.clearRect(0,0,W,H);
+
+    // style
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,255,0,0.9)';
+    ctx.fillStyle   = 'rgba(0,255,0,0.9)';
+    ctx.font = '13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+    // crosshair
+    const cx = W/2, cy = H/2;
+    ctx.beginPath();
+    ctx.moveTo(cx-14, cy); ctx.lineTo(cx+14, cy);
+    ctx.moveTo(cx, cy-14); ctx.lineTo(cx, cy+14);
+    ctx.stroke();
+
+    // measures
+    for (const m of measures){
+      ctx.beginPath();
+      ctx.moveTo(m.a.x, m.a.y);
+      ctx.lineTo(m.b.x, m.b.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(m.a.x, m.a.y, 4, 0, Math.PI*2);
+      ctx.arc(m.b.x, m.b.y, 4, 0, Math.PI*2);
+      ctx.fill();
+
+      const dx = m.b.x - m.a.x, dy = m.b.y - m.a.y;
+      const px = (m.a.x + m.b.x)/2, py = (m.a.y + m.b.y)/2;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      ctx.fillText(`#${m.id} px:${len.toFixed(0)}`, px+8, py-8);
+    }
+
+    // pending first point
+    if (p1){
+      ctx.beginPath();
+      ctx.arc(p1.x, p1.y, 6, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillText('P1', p1.x+8, p1.y-8);
+    }
+
+    // ===== IMU LEVEL overlay =====
+    const cx0 = W/2, cy0 = H/2;
+    const scale = 18; // px/degree
+    const dxl = Math.max(-250, Math.min(250, imuRoll * scale));
+
+    let col = 'rgba(0,255,0,0.9)';
+    const a = Math.abs(imuRoll);
+    if (a > 0.3) col = 'rgba(255,255,0,0.9)';
+    if (a > 1.0) col = 'rgba(255,80,80,0.95)';
+
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 3;
+
+    // level line
+    ctx.beginPath();
+    ctx.moveTo(cx0-180, cy0);
+    ctx.lineTo(cx0+180, cy0);
+    ctx.stroke();
+
+    // bubble
+    ctx.beginPath();
+    ctx.arc(cx0 + dxl, cy0, 10, 0, Math.PI*2);
+    ctx.stroke();
+  }
+
+  
+  // ===== pointer/touch input =====
+  let pressT = null;
+  let pressXY = null;
+
+  function canvasXY(e){
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    return {x,y};
+  }
+
+  function clearPress(){
+    if (pressT){ clearTimeout(pressT); pressT = null; }
+    pressXY = null;
+  }
+
+  // === INPUT: pointer (mouse + touch) ===
+try { canvas.style.touchAction = "none"; } catch(e){}
+
+// debug overlay (widać na telefonie bez devtools)
+let __dbg = document.getElementById('dbg');
+if(!__dbg){
+  __dbg = document.createElement('div');
+  __dbg.id = 'dbg';
+  __dbg.style.position = 'absolute';
+  __dbg.style.left = '8px';
+  __dbg.style.bottom = '8px';
+  __dbg.style.padding = '4px 6px';
+  __dbg.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  __dbg.style.background = 'rgba(0,0,0,0.35)';
+  __dbg.style.color = 'rgba(0,255,0,0.95)';
+  __dbg.style.zIndex = '9999';
+  __dbg.style.pointerEvents = 'none';
+  document.body.appendChild(__dbg);
+}
+
+function canvasXYFromEvent(e){
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left;
+  const y = e.clientY - r.top;
+  return {x,y};
+}
+
+canvas.addEventListener('pointerdown', async (e) => {
+  // WAŻNE dla telefonu: bez tego przeglądarka potrafi “zabrać” event na scroll/zoom
+  try { e.preventDefault(); } catch(_){}
+  try { canvas.setPointerCapture(e.pointerId); } catch(_){}
+
+  const {x,y} = canvasXYFromEvent(e);
+  __dbg.textContent = `down x:${x.toFixed(1)} y:${y.toFixed(1)} p1:${p1?1:0} measures:${(measures||[]).length}`;
+
+  // Alt = delete nearest (PC)
+  if (e.altKey){
+    await deleteNearest(x,y);
+    return;
+  }
+
+  // Right click = clear (PC)
+  if (e.button === 2){
+    p1 = null;
+    await apiPost('/api/job/clear', {});
+    await refreshJob();
+    return;
+  }
+
+  // Normal tap/click: first point -> second point
+  if (!p1){
+    p1 = {x,y};
+    draw();                 // pokaż P1 natychmiast
+    return;
+  } else {
+    const a = p1;
+    p1 = null;
+    await addMeasure(a, {x,y});
+    return;
+  }
+}, {passive:false});
+canvas.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    // if user just tapped, cancel delete timer
+    clearPress();
+  }, {passive:false});
+
+  canvas.addEventListener('pointercancel', (e) => {
+    e.preventDefault();
+    clearPress();
+  }, {passive:false});
+const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (e.altKey){
+      await deleteNearest(x,y);
+      return;
+    }
+
+    if (!p1){
+      p1 = {x,y};
+      draw();
+      return;
+    }
+
+    const a = p1;
+    const b = {x,y};
+    p1 = null;
+    await addMeasure(a,b);
+  });
+
+  // HUD updater (pull /health)
+  async function tick(){
+    try{
+      const h = await apiGet('/health');
+      const L = h.latest || {};
+      imuRoll  = parseFloat(L.roll  || 0);
+      imuPitch = parseFloat(L.pitch || 0);
+
+      
+// raw cache
+lastRawRoll  = imuRoll;
+lastRawPitch = imuPitch;
+
+// apply user zero offsets
+let rr = lastRawRoll  - rollZero;
+let pp = lastRawPitch - pitchZero;
+
+// snap-to-level with hysteresis (roll only)
+if (!_snapActive && Math.abs(rr) <= SNAP_ON_DEG) _snapActive = true;
+if (_snapActive && Math.abs(rr) >= SNAP_OFF_DEG) _snapActive = false;
+
+if (_snapActive) rr = 0;
+
+imuRoll  = rr;
+imuPitch = pp;
+draw();
+
+      hud.textContent =
+        `LiDAR:${L.dist_cm}cm S:${L.strength} T:${L.temp_c}C | R:${imuRoll} P:${imuPitch} | SNAP:${levelSnapOn?(_snapActive?'ON':'ARM'):'OFF'} ZR:${rollZero.toFixed(2)}`;
+    } catch(e){
+      hud.textContent = 'health: FAIL';
+    }
+    setTimeout(tick, 250);
+  }
+
+  // ===== keybinds =====
+window.addEventListener('keydown', (e) => {
+  const k = (e.key || '').toLowerCase();
+  if (k === 'l') {
+    levelSnapOn = !levelSnapOn;
+    localStorage.setItem('levelSnapOn', levelSnapOn ? '1' : '0');
+  }
+  if (k === 'z') {
+    // set current view as "zero"
+    rollZero  = lastRawRoll;
+    pitchZero = lastRawPitch;
+    localStorage.setItem('rollZero',  String(rollZero));
+    localStorage.setItem('pitchZero', String(pitchZero));
+    _snapActive = false; // reset state
+  }
+});
+refreshJob();
+  tick();
+})();
+</script>
+
+<div id="dbg" style="
+  position:fixed; left:8px; top:8px; z-index:9999;
+  padding:6px 8px; border-radius:10px;
+  background:rgba(0,0,0,0.35); color:rgba(0,255,0,0.95);
+  font:12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events:none; white-space:pre;"></div>
+</body>
+
+</html>
+"""
+
+
+# ======================
+# CAMERA2 STREAM (MJPEG)
+# ======================
+def camera_open2():
+    cap = cv2.VideoCapture(VIDEO_DEV2, cv2.CAP_V4L2)
+
+    # CAM2 (older UVC) -> prefer MJPG, stable for UVC on Pi
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, 15)
+
+    # Try to stabilize exposure on old cams (best effort; may be ignored)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # 1=manual on some backends, ignored on others
+    cap.set(cv2.CAP_PROP_EXPOSURE, -6)      # typical range negative on UVC, ignored if unsupported
+    cap.set(cv2.CAP_PROP_GAIN, 0)
+
+    import time
+    time.sleep(0.25)
+    return cap
+
+
+def mjpeg_frames2():
+    cap = camera_open2()
+
+    while True:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            status["video_ok"] = False
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.2)
+            cap = camera_open2()
+            pass
+
+        # na razie: bez dodatkowych overlay (czysty obraz z cam2)
+        ret, jpg = cv2.imencode(".jpg", frame)
+        if not ret:
+            pass
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+
+
+# ======================
+# ROUTES
+# ======================
+@app.route("/")
+def index():
+    return render_template("index.html")
+@app.route("/cam.mjpg")
+def cam():
+    return Response(mjpeg_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+
+@app.route("/cam2.mjpg")
+def cam2():
+    return Response(mjpeg_frames2(), mimetype="multipart/x-mixed-replace; boundary=frame")
+@app.route("/health")
+def health():
+    with state_lock:
+        return jsonify({"ok": True, "status": status, "latest": latest})
+
+@app.route("/api/live_job", methods=["GET"])
+def api_live_job_get():
+    with job_lock:
+        job = load_live_job()
+    return jsonify(job)
+
+@app.route("/api/live_job", methods=["POST"])
+def api_live_job_post():
+    try:
+        payload = request.get_json(force=True, silent=False)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid json"}), 400
+
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "json must be object"}), 400
+
+    with job_lock:
+        save_live_job(payload)
+
+    return jsonify({"ok": True})
+
+@app.route("/api/live_job/reset", methods=["POST"])
+def api_live_job_reset():
+    with job_lock:
+        save_live_job({"job_id": "live", "measures": [], "updated_ts": time.time()})
+    return jsonify({"ok": True})
+
+
+# job API
+@app.route("/api/job", methods=["GET"])
+def api_job_get():
+    with job_lock:
+        return jsonify({
+            "version": job.get("version", 1),
+            "created_ts": job.get("created_ts"),
+            "updated_ts": job.get("updated_ts"),
+            "measurements": job.get("measurements", []),
+            "next_id": job.get("next_id", 1),
+        })
+
+@app.route("/api/job/add", methods=["POST"])
+def api_job_add():
+    data = request.get_json(force=True, silent=True) or {}
+    a = data.get("a")
+    b = data.get("b")
+    if not a or not b:
+        return jsonify({"ok": False, "err": "missing a/b"}), 400
+
+    with job_lock:
+        mid = int(job.get("next_id", 1))
+        job["next_id"] = mid + 1
+        m = {
+            "id": mid,
+            "ts": time.time(),
+            "a": {"x": float(a["x"]), "y": float(a["y"])},
+            "b": {"x": float(b["x"]), "y": float(b["y"])},
+            "label": data.get("label") or ""
+        }
+        job.setdefault("measurements", []).append(m)
+    job_save()
+    return api_job_get()
+
+@app.route("/api/job/delete", methods=["POST"])
+def api_job_delete():
+    data = request.get_json(force=True, silent=True) or {}
+    mid = data.get("id")
+    if mid is None:
+        return jsonify({"ok": False, "err": "missing id"}), 400
+    mid = int(mid)
+
+    with job_lock:
+        ms = job.get("measurements", [])
+        job["measurements"] = [m for m in ms if int(m.get("id", -1)) != mid]
+    job_save()
+    return api_job_get()
+
+@app.route("/api/job/clear", methods=["POST"])
+def api_job_clear():
+    with job_lock:
+        job["measurements"] = []
+        job["next_id"] = 1
+    job_save()
+    return api_job_get()
+
+@app.route("/api/job/export", methods=["GET"])
+def api_job_export():
+    # returns JSON exactly as stored (no clicking needed; your UI can call it or you can curl it)
+    with job_lock:
+        return jsonify(job)
+
+@app.route("/api/job/import", methods=["POST"])
+def api_job_import():
+    # body: full job json
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "err": "body must be json object"}), 400
+    with job_lock:
+        job.clear()
+        job.update(data)
+        if "measurements" not in job: job["measurements"] = []
+        if "next_id" not in job: job["next_id"] = 1
+        if "version" not in job: job["version"] = 1
+        if "created_ts" not in job: job["created_ts"] = time.time()
+        job["updated_ts"] = time.time()
+    job_save()
+    return api_job_get()
+
+# ======================
+# MAIN
+# ======================
+def start_threads():
+    threading.Thread(target=lidar_loop, daemon=True).start()
+    threading.Thread(target=imu_loop, daemon=True).start()
+
+if __name__ == "__main__":
+    job_load()
+    start_threads()
+    app.run(host=HOST, port=PORT, threaded=True)

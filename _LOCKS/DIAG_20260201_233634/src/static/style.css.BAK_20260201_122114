@@ -1,0 +1,317 @@
+html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+#stage { position:fixed; inset:0; }
+#cam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+#tint { position:absolute; inset:0; pointer-events:none; background:rgba(0,255,0,0.06); mix-blend-mode:screen; }
+#overlay { position:absolute; inset:0; width:100%; height:100%; }
+
+#hud {
+  position:absolute; left:0; right:0; bottom:0;
+  padding:6px 10px;
+  font: 12px/1.15 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(0,255,0,0.92);
+  background: rgba(0,0,0,0.25);
+  border-top: 1px solid rgba(0,255,0,0.18);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events:none;
+}
+
+#hudline { opacity: 0.95; }
+
+#help{
+  position:absolute; left:10px; top:10px;
+  font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(0,255,0,0.80);
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(0,255,0,0.18);
+  padding:6px 8px;
+  border-radius: 8px;
+  pointer-events:none;
+}
+
+/* ===== HUD FIX (thin + clamp to screen) ===== */
+#hud{
+  position:fixed;
+  left:0; right:0; bottom:0;
+  padding:4px 6px;
+  background: rgba(0,0,0,0.18);
+  border-top: 1px solid rgba(140,255,180,0.18);
+  pointer-events:none;
+  z-index: 50;
+}
+#hudline{
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 400;
+  color: rgba(140,255,180,0.90);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100vw;
+}
+
+/* --- UNICON: disable old HUD text --- */
+#hud{display:none!important}
+
+
+/* UNICON_SLIDE_MENU_CSS_V1 (deprecated) */
+#btnOpenMenu{
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5000;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,255,120,0.35);
+  background: rgba(0,30,12,0.35);
+  color: rgba(180,255,210,0.95);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+#uniconMenuBackdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 4990;
+  display: none;
+  background: rgba(0,0,0,0.25);
+}
+
+#uniconMenuPanel{
+  position: fixed;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  width: min(920px, calc(100vw - 24px));
+  z-index: 5001;
+  display: none;
+  border-radius: 16px;
+  border: 1px solid rgba(0,255,120,0.25);
+  background: rgba(0,30,12,0.18);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 0 0 1px rgba(0,255,120,0.08) inset;
+}
+
+#uniconMenuPanel.open{
+  display: block;
+}
+
+.uniconMenuHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 10px 12px 6px 12px;
+  color: rgba(180,255,210,0.95);
+}
+
+.uniconMenuTitle{
+  font-weight: 800;
+}
+
+.uniconBtnMini{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,255,120,0.25);
+  background: rgba(0,30,12,0.25);
+  color: rgba(180,255,210,0.95);
+  font-size: 18px;
+}
+
+.uniconMenuGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+@media (max-width: 700px){
+  .uniconMenuGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.uniconBtn{
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,255,120,0.25);
+  background: rgba(0,30,12,0.22);
+  color: rgba(180,255,210,0.95);
+  font-weight: 700;
+}
+
+.uniconOut{
+  margin: 0 12px 12px 12px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,255,120,0.18);
+  background: rgba(0,0,0,0.20);
+  color: rgba(180,255,210,0.95);
+  overflow:auto;
+  max-height: 40vh;
+}
+/* /UNICON_SLIDE_MENU_CSS_V1 */
+
+
+/* UNICON_SLIDE_MENU_CSS_V2 */
+/* MENU button: TOP-CENTER */
+#btnOpenMenu{
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10050;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,255,120,0.30);
+  background: rgba(0,35,14,0.20);
+  color: rgba(180,255,210,0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-weight: 800;
+  letter-spacing: 0.6px;
+}
+
+/* Backdrop: FULL SCREEN click-to-close */
+#uniconMenuBackdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 10040;
+  display: none;
+  background: rgba(0,0,0,0.25);
+}
+
+/* Panel: REAL OVERLAY, not in page flow */
+#uniconMenuPanel{
+  position: fixed;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(920px, calc(100vw - 18px));
+  z-index: 10060;
+  display: none;
+
+  border-radius: 18px;
+  border: 1px solid rgba(0,255,120,0.22);
+
+  /* ~10-15% green shade */
+  background: rgba(0,35,14,0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  box-shadow:
+    0 0 0 1px rgba(0,255,120,0.07) inset,
+    0 14px 40px rgba(0,0,0,0.35);
+}
+
+#uniconMenuPanel.open{ display: block; }
+
+.uniconMenuHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 10px 12px 6px 12px;
+  color: rgba(180,255,210,0.95);
+}
+
+.uniconMenuTitle{ font-weight: 900; }
+
+.uniconBtnMini{
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,255,120,0.22);
+  background: rgba(0,35,14,0.18);
+  color: rgba(180,255,210,0.95);
+  font-size: 20px;
+}
+
+.uniconMenuGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+@media (max-width: 700px){
+  .uniconMenuGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.uniconBtn{
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(0,255,120,0.22);
+  background: rgba(0,35,14,0.16);
+  color: rgba(180,255,210,0.95);
+  font-weight: 800;
+}
+
+.uniconOut{
+  margin: 0 12px 12px 12px;
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(0,255,120,0.16);
+  background: rgba(0,0,0,0.18);
+  color: rgba(180,255,210,0.95);
+  overflow:auto;
+  max-height: 40vh;
+}
+/* /UNICON_SLIDE_MENU_CSS_V2 */
+
+
+
+/* UNICON_MENU_OVERLAY_FORCE_V1 */
+
+/* MENU button MUST be top-center, always */
+#btnOpenMenu{
+  position: fixed !important;
+  top: 10px !important;
+  left: 50% !important;
+  bottom: auto !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 10050 !important;
+}
+
+/* Backdrop MUST cover whole screen */
+#uniconMenuBackdrop{
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10040 !important;
+  display: none !important;
+}
+
+/* Panel MUST be overlay, not in page flow */
+#uniconMenuPanel{
+  position: fixed !important;
+  top: 54px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: min(920px, calc(100vw - 18px)) !important;
+
+  z-index: 10060 !important;
+
+  /* CLOSED by default */
+  display: none !important;
+
+  border-radius: 18px !important;
+  border: 1px solid rgba(0,255,120,0.22) !important;
+
+  /* 10-15% green shade */
+  background: rgba(0,35,14,0.12) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+
+  box-shadow:
+    0 0 0 1px rgba(0,255,120,0.07) inset,
+    0 14px 40px rgba(0,0,0,0.35) !important;
+}
+
+#uniconMenuPanel.open{ display: block !important; }
+
+/* Output box reasonable height on phone */
+#uniconMenuOut{ max-height: 40vh !important; overflow: auto !important; }
+
+/* /UNICON_MENU_OVERLAY_FORCE_V1 */

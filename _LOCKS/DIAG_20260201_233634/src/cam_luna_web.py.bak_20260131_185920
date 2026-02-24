@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+import time, threading, math, traceback
+
+import cv2
+from flask import Flask, Response, jsonify
+
+# Optional deps
+try:
+    import serial
+except Exception:
+    serial = None
+
+try:
+    import smbus
+except Exception:
+    smbus = None
+
+
+# ======================
+# CONFIG
+# ======================
+VIDEO_DEV   = "/dev/video0"
+
+LIDAR_PORT  = "/dev/serial0"   # TF-Luna on UART
+LIDAR_BAUD  = 115200
+
+IMU_ENABLED = True             # ICM20948 @ 0x68 on I2C-1
+IMU_ADDR    = 0x68
+REG_BANK_SEL= 0x7F
+PWR_MGMT_1  = 0x06
+PWR_MGMT_2  = 0x07
+ACCEL_XOUT_H= 0x2D
+
+PORT        = 8090
+
+
+app = Flask(__name__)
+
+latest = {
+    "ts": None,
+    "dist_cm": None,
+    "strength": None,
+    "temp_c": None,
+    "roll": None,
+    "pitch": None,
+    "fps": None,
+}
+
+status = {
+    "video_ok": False,
+    "lidar_ok": False,
+    "imu_ok": False,
+    "errors": [],
+    "boot_ts": time.time(),
+}
+
+
+# ======================
+# HELPERS
+# ======================
+def set_error(tag, e):
+    msg = f"{tag}: {repr(e)}"
+    status["errors"] = (status["errors"] + [msg])[-10:]  # keep last 10
+    # print for logs
+    print(msg)
+    traceback.print_exc()
+
+def i16(h, l):
+    v = (h << 8) | l
+    return v - 65536 if (v & 0x8000) else v
+
+def read_exact(ser, n):
+    buf = bytearray()
+    while len(buf) < n:
+        b = ser.read(n - len(buf))
+        if not b:
+            return None
+        buf.extend(b)
+    return bytes(buf)
+
+
+# ======================
+# LiDAR LOOP (TF-Luna)
+# ======================
+def lidar_loop():
+    if serial is None:
+        status["lidar_ok"] = False
+        set_error("lidar", Exception("python3-serial not installed / import failed"))
+        return
+
+    try:
+        ser = serial.Serial(LIDAR_PORT, LIDAR_BAUD, timeout=0.2)
+        status["lidar_ok"] = True
+    except Exception as e:
+        status["lidar_ok"] = False
+        set_error("lidar_open", e)
+        return
+
+    while True:
+        try:
+            b1 = ser.read(1)
+            if not b1 or b1[0] != 0x59:
+                continue
+            b2 = ser.read(1)
+            if not b2 or b2[0] != 0x59:
+                continue
+
+            payload = read_exact(ser, 7)
+            if not payload:
+                continue
+
+            frame = b"\x59\x59" + payload
+            if (sum(frame[:8]) & 0xFF) != frame[8]:
+                continue
+
+            dist_mm  = frame[2] | (frame[3] << 8)   # TF-Luna zwykle raportuje w cm
+            strength = frame[4] | (frame[5] << 8)
+            temp     = (frame[6] | (frame[7] << 8)) / 8.0 - 256.0
+
+            latest["ts"]       = time.time()
+            latest["dist_cm"]  = float(dist_mm)
+            latest["strength"] = int(strength)
+            latest["temp_c"]   = round(temp, 1)
+            status["lidar_ok"] = True
+
+        except Exception as e:
+            status["lidar_ok"] = False
+            set_error("lidar_loop", e)
+            time.sleep(0.25)
+
+
+# ======================
+# IMU LOOP (acc-only roll/pitch)
+# ======================
+def imu_select_bank(bus, b):
+    bus.write_byte_data(IMU_ADDR, REG_BANK_SEL, (b & 3) << 4)
+    time.sleep(0.002)
+
+def imu_read6(bus, reg):
+    d = bus.read_i2c_block_data(IMU_ADDR, reg, 6)
+    return i16(d[0], d[1]), i16(d[2], d[3]), i16(d[4], d[5])
+
+def imu_loop():
+    if not IMU_ENABLED:
+        status["imu_ok"] = False
+        return
+
+    if smbus is None:
+        status["imu_ok"] = False
+        set_error("imu", Exception("smbus not available (python3-smbus)"))
+        return
+
+    try:
+        bus = smbus.SMBus(1)
+        imu_select_bank(bus, 0)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_1, 0x01)
+        time.sleep(0.05)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_2, 0x00)
+        time.sleep(0.05)
+        status["imu_ok"] = True
+    except Exception as e:
+        status["imu_ok"] = False
+        set_error("imu_open", e)
+        return
+
+    while True:
+        try:
+            imu_select_bank(bus, 0)
+            ax, ay, az = imu_read6(bus, ACCEL_XOUT_H)
+
+            # roll around X, pitch around Y (acc-only)
+            roll  = math.degrees(math.atan2(ay, az))
+            pitch = math.degrees(math.atan2(-ax, math.sqrt(ay*ay + az*az)))
+
+            latest["roll"]  = round(roll, 2)
+            latest["pitch"] = round(pitch, 2)
+            status["imu_ok"] = True
+
+            time.sleep(0.05)
+
+        except Exception as e:
+            status["imu_ok"] = False
+            set_error("imu_loop", e)
+            time.sleep(0.25)
+
+
+# ======================
+# CAMERA STREAM (MJPEG)
+# ======================
+def mjpeg_frames():
+    cap = cv2.VideoCapture(VIDEO_DEV, cv2.CAP_V4L2)
+
+# WYMUSZ MJPG (UVC na Pi potrafi dawać zielony ekran bez tego)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 15)
+    time.sleep(0.2)
+
+
+    status["video_ok"] = True
+
+    # FPS calc
+    t0 = time.time()
+    frames = 0
+
+    while True:
+        ok, frame = cap.read()
+        if (not ok) or frame is None or frame.size == 0:
+             time.sleep(0.05)
+             continue
+
+        status["video_ok"] = True
+
+        # overlay cross + simple horizon line from roll
+        h, w = frame.shape[:2]
+        cx, cy = w // 2, h // 2
+
+        cv2.drawMarker(frame, (cx, cy), (0,255,0), cv2.MARKER_CROSS, 30, 2)
+
+        if latest["roll"] is not None:
+            ang = math.radians(latest["roll"])
+            L = 220
+            x1 = int(cx - L * math.cos(ang))
+            y1 = int(cy - L * math.sin(ang))
+            x2 = int(cx + L * math.cos(ang))
+            y2 = int(cy + L * math.sin(ang))
+            cv2.line(frame, (x1,y1), (x2,y2), (0,255,0), 2)
+
+        # tiny text top-left
+        txt = f"LiDAR {latest['dist_cm']}cm  S:{latest['strength']}  T:{latest['temp_c']}C  R:{latest['roll']} P:{latest['pitch']}"
+        cv2.putText(frame, txt, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+
+        # fps
+        frames += 1
+        now = time.time()
+        if now - t0 >= 1.0:
+            latest["fps"] = round(frames / (now - t0), 1)
+            t0 = now
+            frames = 0
+
+        ret, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ret:
+            continue
+
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+
+
+# ======================
+# ROUTES
+# ======================
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "status": status, "latest": latest})
+
+@app.get("/debug_imu")
+def debug_imu():
+    return jsonify({
+        "roll": latest.get("roll"),
+        "pitch": latest.get("pitch"),
+        "note": "We will add /zero + calibration-save next (offsets)."
+    })
+
+@app.get("/cam.mjpg")
+def cam():
+    return Response(mjpeg_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.get("/")
+def menu():
+    return """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UNICON Console</title>
+<style>
+  body{margin:0;font-family:system-ui;background:#050a05;color:#d7ffd7}
+  .wrap{max-width:900px;margin:0 auto;padding:20px}
+  .card{background:rgba(0,50,0,.25);border:1px solid rgba(0,255,0,.25);border-radius:16px;padding:16px}
+  .btn{display:inline-block;padding:14px 16px;margin:8px 8px 0 0;border-radius:14px;
+       background:rgba(0,255,0,.18);border:1px solid rgba(0,255,0,.35);color:#d7ffd7;
+       text-decoration:none;font-weight:600}
+  .btn:hover{background:rgba(0,255,0,.28)}
+  .muted{opacity:.8;font-size:14px;margin-top:10px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>UNICON Main Menu</h2>
+    <div class="card">
+      <div class="row">
+        <a class="btn" href="/operate">▶ Start Operating</a>
+        <a class="btn" href="/health" target="_blank">Health (JSON)</a>
+        <a class="btn" href="/debug_imu" target="_blank">IMU Debug (JSON)</a>
+      </div>
+      <div class="muted">
+        Start Operating = kamera + IMU + LiDAR overlay. <br>
+        Jeśli obraz nie działa: sprawdź zasilanie 5V (bez dropów) + /dev/video0.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+@app.get("/operate")
+def operate():
+    return """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UNICON Operating</title>
+<style>
+  body{margin:0;background:#000;overflow:hidden}
+  #bg{position:fixed;inset:0;width:100vw;height:100vh;object-fit:contain;background:#000}
+  /* 25% green tint overlay */
+  #tint{display:none !important;}
+  /* bottom status line */
+  #hud{position:fixed;left:0;right:0;bottom:0;padding:8px 10px;
+       color:#b7ffb7;font:14px/1.2 system-ui;
+       background:rgba(0,0,0,.45);
+       border-top:1px solid rgba(0,255,0,.25);
+       text-shadow:0 0 6px rgba(0,255,0,.35);
+       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #topbar{position:fixed;left:0;right:0;top:0;padding:10px;
+          display:flex;gap:10px;align-items:center}
+  .btn{padding:10px 12px;border-radius:12px;background:rgba(0,255,0,.14);
+       border:1px solid rgba(0,255,0,.25);color:#d7ffd7;text-decoration:none;font-weight:700}
+  .btn:hover{background:rgba(0,255,0,.22)}
+</style>
+</head>
+<body>
+  <img id="bg" src="/cam.mjpg">
+  <!-- tint disabled -->
+
+  <div id="topbar">
+    <a class="btn" href="/">⟵ Menu</a>
+    <a class="btn" href="/health" target="_blank">Health</a>
+    <a class="btn" href="/debug_imu" target="_blank">IMU</a>
+  </div>
+
+  <div id="hud">loading…</div>
+
+<script>
+async function tick(){
+  try{
+    const r = await fetch('/health', {cache:'no-store'});
+    const j = await r.json();
+    const L = j.latest || {};
+    const S = j.status || {};
+    const line =
+      `OK:${j.ok} | VIDEO:${S.video_ok} IMU:${S.imu_ok} LiDAR:${S.lidar_ok} | ` +
+      `LiDAR:${L.dist_cm}cm S:${L.strength} T:${L.temp_c}C | ` +
+      `R:${L.roll} P:${L.pitch} | FPS:${L.fps} | ERR:${(S.errors||[]).slice(-1)[0]||'none'}`;
+    document.getElementById('hud').textContent = line;
+  }catch(e){
+    document.getElementById('hud').textContent = 'health fetch failed: ' + e;
+  }
+}
+setInterval(tick, 250);
+tick();
+</script>
+</body>
+</html>
+"""
+
+# ======================
+# MAIN
+# ======================
+if __name__ == "__main__":
+    threading.Thread(target=lidar_loop, daemon=True).start()
+    threading.Thread(target=imu_loop, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT, threaded=True)

@@ -1,0 +1,52 @@
+{
+  "tools": [
+    {
+      "tool_id": "31",
+      "tool_name": "WORKTOP LEVEL + MEASURE",
+      "issue_type": "WORKTOP",
+      "doc_file": "31_TOOL_WORKTOP_LEVEL_MEASURE.md",
+      "preview_png": "31A_TOOL_WORKTOP_LEVEL_MEASURE.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    },
+    {
+      "tool_id": "32",
+      "tool_name": "FRAME PLUMB 3D",
+      "issue_type": "FRAME",
+      "doc_file": "32_TOOL_FRAME_PLUMB_3D.md",
+      "preview_png": "32A_TOOL_FRAME_PLUMB_3D.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    },
+    {
+      "tool_id": "33",
+      "tool_name": "CUT MITRE SAW",
+      "issue_type": "CUT",
+      "doc_file": "33_TOOL_CUT_MITRE_SAW.md",
+      "preview_png": "33A_TOOL_CUT_MITRE_SAW.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    },
+    {
+      "tool_id": "34",
+      "tool_name": "DOOR GAP TOLERANCE",
+      "issue_type": "GAPS",
+      "doc_file": "34_TOOL_DOOR_GAP_TOLERANCE.md",
+      "preview_png": "34A_TOOL_DOOR_GAP_TOLERANCE.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    },
+    {
+      "tool_id": "35",
+      "tool_name": "HINGE LOAD CHECK",
+      "issue_type": "HINGE",
+      "doc_file": "35_TOOL_HINGE_LOAD_CHECK.md",
+      "preview_png": "35A_TOOL_HINGE_LOAD_CHECK.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    },
+    {
+      "tool_id": "36",
+      "tool_name": "FINAL CLIENT CHECK",
+      "issue_type": "FINAL",
+      "doc_file": "36_TOOL_FINAL_CLIENT_CHECK.md",
+      "preview_png": "36A_TOOL_FINAL_CLIENT_CHECK.png",
+      "style_id": "TXT_HUD_90S_THIN_GREEN"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "style_id": "TXT_HUD_90S_THIN_GREEN",
+
+  "colors": {
+    "hud_primary": "#55FF55",
+    "hud_secondary": "#33AA33",
+    "warning": "#FFD000",
+    "error": "#FF4040",
+    "neutral": "#AAAAAA",
+    "background": "rgba(0,0,0,0)"
+  },
+
+  "lines": {
+    "thin_px": 1,
+    "medium_px": 2,
+    "thick_px": 3
+  },
+
+  "font": {
+    "family_preferred": "monospace",
+    "family_fallback": ["system-ui", "sans-serif"],
+    "size_small_px": 9,
+    "size_normal_px": 11,
+    "size_large_px": 13,
+    "letter_spacing": 0.6
+  },
+
+  "layout_rules": {
+    "numbers_hidden_by_default": true,
+    "units_on_new_line": true,
+    "no_icons": true,
+    "no_gradients": true,
+    "no_shadows": true,
+    "thin_frames_only": true
+  },
+
+  "interaction_hints": {
+    "hold_for_details": true,
+    "tap_to_pin": true,
+    "swipe_to_switch_axis": true
+  }
+}

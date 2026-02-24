@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+import os
+import time
+from typing import Any, Dict, List
+
+import cv2
+from flask import Flask, jsonify
+
+APP_HOST = os.environ.get("ARUCO_HOST", "0.0.0.0")
+APP_PORT = int(os.environ.get("ARUCO_PORT", "8096"))
+
+# UNICON baseline: RIGHT camera = /dev/video0
+VIDEO = os.environ.get("ARUCO_VIDEO", "/dev/video0")
+
+# 4x4_50 markers (simple and stable)
+DICT_NAME = os.environ.get("ARUCO_DICT", "DICT_4X4_50")
+DICT_ID = getattr(cv2.aruco, DICT_NAME, cv2.aruco.DICT_4X4_50)
+
+app = Flask("unicon_aruco_8096")
+
+
+def _open_cap() -> cv2.VideoCapture:
+    cap = cv2.VideoCapture(VIDEO)
+    # Keep it light; no MJPEG expectations (baseline right cam may be MJPEG, but OpenCV will handle)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
+def _detect_one() -> Dict[str, Any]:
+    cap = _open_cap()
+    try:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return {"ok": False, "err": f"read_failed VIDEO={VIDEO}"}
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        aruco_dict = cv2.aruco.getPredefinedDictionary(DICT_ID)
+        params = cv2.aruco.DetectorParameters()
+        detector = cv2.aruco.ArucoDetector(aruco_dict, params)
+
+        corners, ids, rejected = detector.detectMarkers(gray)
+
+        out_ids: List[int] = []
+        out: List[Dict[str, Any]] = []
+        if ids is not None and len(ids) > 0:
+            for i, mid in enumerate(ids.flatten().tolist()):
+                out_ids.append(int(mid))
+                # corners[i] shape: (1,4,2) float
+                pts = corners[i].reshape(-1, 2).tolist()
+                out.append({"id": int(mid), "corners_px": pts})
+
+        return {
+            "ok": True,
+            "video": VIDEO,
+            "dict": DICT_NAME,
+            "w": int(frame.shape[1]),
+            "h": int(frame.shape[0]),
+            "count": len(out_ids),
+            "ids": out_ids,
+            "markers": out,
+            "ts": time.time(),
+        }
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "service": "unicon_aruco_8096", "video": VIDEO, "dict": DICT_NAME})
+
+
+@app.get("/api/aruco/test")
+def test():
+    return jsonify(_detect_one())
+
+
+if __name__ == "__main__":
+    app.run(host=APP_HOST, port=APP_PORT, debug=False, threaded=True)

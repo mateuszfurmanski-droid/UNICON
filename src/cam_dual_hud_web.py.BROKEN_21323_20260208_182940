@@ -1,0 +1,323 @@
+
+def mjpeg_stream_right():
+    # always streams from the actually-working cap selected at startup
+    import cv2, time
+    while True:
+        name = globals().get("ACTIVE_CAP_NAME")
+        cap = globals().get(name) if name else None
+        if cap is None:
+            time.sleep(0.05)
+            continue
+        try:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            ret, jpeg = cv2.imencode(".jpg", frame)
+            if not ret:
+                continue
+            yield (b"--frame
+"
+                   b"Content-Type: image/jpeg
+
+" +
+                   jpeg.tobytes() + b"
+")
+        except Exception:
+            continue
+
+#!/usr/bin/env python3
+import os, time, threading
+import cv2
+from flask import Flask, Response, request, jsonify, redirect
+
+
+# === UNICON CAM AUTOSELECT (LOCKED) ===
+ACTIVE_CAP_NAME = None
+
+def _pick_working_cap():
+    # tries to read a few frames from each known cap var; picks first that returns a frame
+    global ACTIVE_CAP_NAME
+    try:
+        import time as _t
+        for _name in ['cap']:
+            cap = globals().get(_name)
+            if cap is None:
+                continue
+            ok_any = False
+            for _ in range(8):
+                try:
+                    ok, frame = cap.read()
+                    if ok and frame is not None:
+                        ok_any = True
+                        break
+                except Exception:
+                    pass
+                _t.sleep(0.03)
+            if ok_any:
+                ACTIVE_CAP_NAME = _name
+                return _name
+    except Exception:
+        pass
+    ACTIVE_CAP_NAME = None
+    return None
+# LOCKED BASELINE
+LEFT_DEV  = os.environ.get("UNICON_LEFT_DEV",  "/dev/video0")  # MEASURE RAW
+RIGHT_DEV = os.environ.get("UNICON_RIGHT_DEV", "/dev/video2")  # VIEW HUD
+W   = int(os.environ.get("UNICON_W", "640"))
+H   = int(os.environ.get("UNICON_H", "480"))
+FPS = int(os.environ.get("UNICON_FPS", "15"))
+PORT = int(os.environ.get("UNICON_PORT","8095"))
+
+# LiDAR (TF-Luna)
+LUNA_PORT = os.environ.get("LUNA_PORT", "/dev/serial0")
+LUNA_BAUD = int(os.environ.get("LUNA_BAUD","115200"))
+
+GREEN = (0, 255, 0)
+YELLOW = (0, 255, 255)
+RED = (0, 0, 255)
+
+def open_cam(dev: str):
+    cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+    cap.set(cv2.CAP_PROP_FPS, FPS)
+    return cap
+
+capR = open_cam(RIGHT_DEV)
+
+# --- LiDAR reader (best-effort, no hard fail) ---
+last_lidar_m = None
+lidar_ok = False
+
+def tf_luna_reader():
+    global last_lidar_m, lidar_ok
+    try:
+        import serial
+        ser = serial.Serial(LUNA_PORT, LUNA_BAUD, timeout=0.2)
+        buf = bytearray()
+        lidar_ok = True
+        while True:
+            chunk = ser.read(64)
+            if chunk:
+                buf.extend(chunk)
+            # parse frames: 0x59 0x59 Dist_L Dist_H Strength_L Strength_H Temp_L Temp_H Checksum
+            i = 0
+            while i + 9 <= len(buf):
+                if buf[i] == 0x59 and buf[i+1] == 0x59:
+                    frame = buf[i:i+9]
+                    cs = sum(frame[:8]) & 0xFF
+                    if cs == frame[8]:
+                        dist_cm = frame[2] | (frame[3] << 8)
+                        # dist 0 is invalid; keep last valid
+                        if dist_cm > 0:
+                            last_lidar_m = dist_cm / 100.0
+                        i += 9
+                        continue
+                i += 1
+            # trim buffer
+            if len(buf) > 256:
+                buf[:] = buf[-128:]
+            time.sleep(0.01)
+    except Exception:
+        lidar_ok = False
+
+threading.Thread(target=tf_luna_reader, daemon=True).start()
+
+# --- Measure state (V0 step 1: LiDAR delta) ---
+A_m = None
+B_m = None
+last_delta_m = None
+
+def tol_color(delta_m: float):
+    # V0 default tolerances for "difference" measure; adjust later
+    if delta_m <= 0.005:   # 5mm
+        return GREEN, "OK"
+    if delta_m <= 0.015:   # 15mm
+        return YELLOW, "ADJUST"
+    return RED, "FAIL"
+
+app = Flask(__name__)
+
+
+
+
+
+@app.route("/cam")
+def cam():
+    return Response(mjpeg_stream_right(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/cam.mjpg")
+def cam_mjpg():
+    return Response(mjpeg_stream_right(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+# --- CAM ALIAS (HUD expects /cam; real stream is /cam.mjpg) ---
+
+
+@app.route("/cam2")
+def cam2_alias():
+    return redirect("/cam2.mjpg", code=302)
+
+# --- UNICON: BTN STATE (AUTO) ---
+BTN_STATE = {"a": None, "b": None, "last": None}
+
+
+
+def _dist_px(a, b):
+    try:
+        dx = float(b["x"]) - float(a["x"])
+        dy = float(b["y"]) - float(a["y"])
+        return (dx*dx + dy*dy) ** 0.5
+    except Exception:
+        return None
+
+# === UNICON_BTN_API_V1 ===
+# Minimal button API so phone UI can trigger actions and get ACK immediately.
+# We keep it tiny now; later we connect to real A/B capture + anchors.
+UNICON_BTN_STATE = {
+    "a": None,
+    "b": None,
+    "last": None,
+}
+
+def _btn_ack(action: str):
+    UNICON_BTN_STATE["last"] = action
+    return {"ok": True, "action": action, "state": UNICON_BTN_STATE}
+
+
+
+
+
+
+
+@app.get("/api/btn/state")
+def api_btn_state():
+    a = BTN_STATE.get("a")
+    b = BTN_STATE.get("b")
+    d = _dist_px(a, b) if (a and b) else None
+    return jsonify({"ok": True, "state": BTN_STATE, "dist_px": d})
+
+@app.get("/")
+def index():
+    html = f"""<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UNICON HUD</title>
+<style>
+  body {{ margin:0; background:#000; color:#0f0; font-family: monospace; }}
+  .wrap {{ padding:8px; }}
+  .box {{ border:1px solid rgba(0,255,0,0.25); border-radius:12px; overflow:hidden; }}
+  img {{ width:100%; height:auto; display:block; }}
+  .row {{ display:flex; gap:8px; margin-top:8px; }}
+  .btn {{ flex:1; padding:18px 10px; font-size:18px; border-radius:14px;
+         border:1px solid rgba(0,255,0,0.35); background:#050; color:#0f0; }}
+  .btn:active {{ transform: scale(0.98); }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="box"><img src="/mjpeg/right" /></div>
+
+    <div class="row">
+      <button class="btn" onclick="fetch('/api/mark/A',{{method:'POST'}})">SET A</button>
+      <button class="btn" onclick="fetch('/api/mark/B',{{method:'POST'}})">SET B</button>
+      <button class="btn" onclick="fetch('/api/mark/reset',{{method:'POST'}})">RESET</button>
+    </div>
+
+    <div style="opacity:0.85; margin-top:8px;">
+      <div>RIGHT(view): {RIGHT_DEV} | LEFT(measure raw): {LEFT_DEV}</div>
+      <div>LiDAR: {LUNA_PORT}@{LUNA_BAUD} | Port: {PORT}</div>
+      <div><a style="color:#0f0" href="/health">/health</a></div>
+    </div>
+  </div>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
+
+@app.get("/mjpeg/right")
+def mjpeg_right():
+    return Response(mjpeg_stream_right(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+    if last_lidar_m is None:
+        return jsonify(ok=False, error="lidar_no_data"), 409
+
+    if which == "A":
+        A_m = float(last_lidar_m)
+    elif which == "B":
+        B_m = float(last_lidar_m)
+    else:
+        return jsonify(ok=False, error="bad_mark"), 400
+
+    if A_m is not None and B_m is not None:
+        last_delta_m = abs(A_m - B_m)
+
+    return jsonify(ok=True, which=which, A=A_m, B=B_m, delta=last_delta_m)
+
+@app.get("/health")
+def health():
+    return jsonify(
+        ok=True,
+        port=PORT,
+        right=RIGHT_DEV,
+        left=LEFT_DEV,
+        lidar_ok=lidar_ok,
+        lidar_port=LUNA_PORT,
+        lidar_last_m=last_lidar_m,
+        A=A_m, B=B_m, delta=last_delta_m
+    )
+
+# --- UNICON: BTN API (AUTO) ---
+try:
+    from flask import jsonify, request
+except Exception:
+    pass
+
+@app.get("/api/btn/state")
+def api_btn_state_v2():
+    return jsonify({"ok": True, "state": BTN_STATE})
+
+@app.post("/api/btn/set_a")
+def api_btn_set_a_v2():
+    BTN_STATE["last"] = "A"
+    return jsonify({"ok": True, "state": BTN_STATE})
+
+@app.post("/api/btn/set_b")
+def api_btn_set_b_v2():
+    BTN_STATE["last"] = "B"
+    return jsonify({"ok": True, "state": BTN_STATE})
+
+@app.post("/api/btn/reset")
+def api_btn_reset_v2():
+    BTN_STATE["a"] = None
+    BTN_STATE["b"] = None
+    BTN_STATE["last"] = None
+    return jsonify({"ok": True, "state": BTN_STATE})
+
+
+
+
+
+@app.post("/api/tap")
+def api_tap():
+    data = request.get_json(silent=True) or {}
+    # Accept either absolute pixels (x,y) or normalized (nx,ny)
+    if "nx" in data and "ny" in data and "w" in data and "h" in data:
+        x = float(data["nx"]) * float(data["w"])
+        y = float(data["ny"]) * float(data["h"])
+    else:
+        x = float(data.get("x", 0.0))
+        y = float(data.get("y", 0.0))
+    BTN_STATE["last"] = {"x": x, "y": y}
+    a = BTN_STATE.get("a")
+    b = BTN_STATE.get("b")
+    d = _dist_px(a, b) if (a and b) else None
+    return jsonify({"ok": True, "state": BTN_STATE, "dist_px": d})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT, threaded=True)
+
+
+

@@ -1,0 +1,5 @@
+IMU MODULE DONE
+- Date: 2026-01-01
+- Sensor: GY-ICM (ICM20948)
+- I2C addr: 0x68
+- Runtime: OK (10 lines)

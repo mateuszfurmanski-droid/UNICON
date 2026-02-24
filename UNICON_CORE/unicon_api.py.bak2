@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+import json
+import os
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
+
+PORT = 8081
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BG_PATH = os.path.join(BASE_DIR, "bg.jpg")
+
+def simulated_imu():
+    # Prosta symulacja - zmienia się z czasem, żebyś widział, że endpoint działa
+    t = time.time()
+    yaw = (t * 20) % 360
+    pitch = 10 * (0.5 - ((t % 2) / 2))
+    roll = 5 * (0.5 - ((t % 3) / 3))
+    return {"yaw": round(yaw, 2), "pitch": round(pitch, 2), "roll": round(roll, 2), "source": "SIMULATED"}
+
+HUD_HTML = r"""<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UNICON HUD – miarka</title>
+<style>
+  html, body { margin:0; padding:0; background:#000; height:100%; overflow:hidden; font-family: Arial, sans-serif; }
+  #wrap { position:relative; width:100vw; height:100vh; background:#000; }
+  #bg {
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    object-fit:contain; /* ważne: bez rozciągania proporcji */
+    background:#000;
+    display:block;
+    user-select:none; -webkit-user-drag:none;
+  }
+  #canvas { position:absolute; inset:0; width:100%; height:100%; }
+  #panel {
+    position:absolute; left:12px; top:12px;
+    color:#0f0; background:rgba(0,0,0,0.55);
+    padding:10px 12px; border:1px solid rgba(0,255,0,0.35);
+    border-radius:10px; min-width:260px;
+    font-size:14px;
+  }
+  #panel input {
+    width:110px; padding:6px; border-radius:8px; border:1px solid rgba(0,255,0,0.35);
+    background:#000; color:#0f0; outline:none;
+  }
+  #panel button{
+    padding:6px 10px; border-radius:8px; border:1px solid rgba(0,255,0,0.35);
+    background:#000; color:#0f0; cursor:pointer;
+  }
+  .row{display:flex; gap:8px; align-items:center; margin-top:8px;}
+  .small{opacity:0.9; font-size:12px;}
+  .val{color:#9f9;}
+  a { color:#0f0; text-decoration:none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <img id="bg" src="/bg.jpg" onerror="this.style.display='none'; document.body.style.background='#000';">
+  <canvas id="canvas"></canvas>
+
+  <div id="panel">
+    <div><b>UNICON HUD – miarka (klik-klik)</b></div>
+    <div class="small">1) Kliknij punkt A, 2) Kliknij punkt B → dystans</div>
+
+    <div class="row">
+      <button id="btnClear">Wyczyść</button>
+      <button id="btnCalib">Ustaw jako KALIBRACJA</button>
+    </div>
+
+    <div class="row">
+      <div>Wynik:</div>
+      <div class="val" id="out">—</div>
+    </div>
+
+    <div class="row">
+      <div>Kalibracja (mm):</div>
+      <input id="mmInput" type="number" step="0.1" placeholder="np. 85.6">
+      <button id="btnApply">Zastosuj</button>
+    </div>
+
+    <div class="small">
+      Skala: <span class="val" id="scaleOut">mm/px = (brak)</span><br/>
+      Tip: karta bankowa = <span class="val">85.6 mm</span>, A4 szerokość = <span class="val">210 mm</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const bg = document.getElementById("bg");
+
+const out = document.getElementById("out");
+const mmInput = document.getElementById("mmInput");
+const scaleOut = document.getElementById("scaleOut");
+
+const btnClear = document.getElementById("btnClear");
+const btnCalib = document.getElementById("btnCalib");
+const btnApply = document.getElementById("btnApply");
+
+let points = [];        // [{x,y}]
+let lastPxDist = null;  // dystans ostatniej linii w px
+let mmPerPx = 0;        // skala po kalibracji
+let calibMode = false;  // czy następny pomiar ma być "kalibracyjny"
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  draw();
+}
+window.addEventListener("resize", resize);
+resize();
+
+function getMousePos(evt) {
+  // UWAGA: mierzymy na warstwie ekranowej (canvas)
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (evt.clientX - rect.left),
+    y: (evt.clientY - rect.top)
+  };
+}
+
+function dist(a,b){
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+function fmtLen(px){
+  if (!mmPerPx || mmPerPx <= 0) return `${px.toFixed(1)} px`;
+  const mm = px * mmPerPx;
+  if (mm >= 1000) return `${(mm/1000).toFixed(3)} m  (${mm.toFixed(1)} mm / ${px.toFixed(1)} px)`;
+  if (mm >= 100) return `${(mm/10).toFixed(1)} cm  (${mm.toFixed(1)} mm / ${px.toFixed(1)} px)`;
+  return `${mm.toFixed(1)} mm  (${px.toFixed(1)} px)`;
+}
+
+function drawPoint(p, label){
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 6, 0, Math.PI*2);
+  ctx.fillStyle = "#00ff00";
+  ctx.fill();
+  ctx.font = "14px Arial";
+  ctx.fillStyle = "#00ff00";
+  ctx.fillText(label, p.x + 10, p.y - 10);
+}
+
+function drawLine(a,b){
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#00ff00";
+  ctx.stroke();
+
+  // opis na środku
+  const px = dist(a,b);
+  const mid = { x:(a.x+b.x)/2, y:(a.y+b.y)/2 };
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "#00ff00";
+  ctx.fillText(fmtLen(px), mid.x + 10, mid.y - 10);
+}
+
+function drawCrosshair(){
+  // celownik na środku
+  const cx = canvas.width/2;
+  const cy = canvas.height/2;
+  ctx.strokeStyle = "rgba(0,255,0,0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 20, cy); ctx.lineTo(cx + 20, cy);
+  ctx.moveTo(cx, cy - 20); ctx.lineTo(cx, cy + 20);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 18, 0, Math.PI*2);
+  ctx.stroke();
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawCrosshair();
+
+  if (points.length >= 1) drawPoint(points[0], "A");
+  if (points.length >= 2) {
+    drawPoint(points[1], "B");
+    drawLine(points[0], points[1]);
+  }
+}
+
+canvas.addEventListener("click", (evt)=>{
+  const p = getMousePos(evt);
+  points.push(p);
+  if (points.length > 2) points = [p]; // po 2 punktach nowy pomiar od nowa
+
+  if (points.length === 2) {
+    lastPxDist = dist(points[0], points[1]);
+    if (calibMode) {
+      out.textContent = `KALIBRACJA: ${lastPxDist.toFixed(1)} px (wpisz mm i kliknij "Zastosuj")`;
+    } else {
+      out.textContent = `POMIAR: ${fmtLen(lastPxDist)}`;
+    }
+  } else {
+    out.textContent = `Kliknij punkt B...`;
+  }
+  draw();
+});
+
+btnClear.addEventListener("click", ()=>{
+  points = [];
+  lastPxDist = null;
+  calibMode = false;
+  out.textContent = "—";
+  draw();
+});
+
+btnCalib.addEventListener("click", ()=>{
+  calibMode = true;
+  out.textContent = "Tryb KALIBRACJI: klik A i B na znanym wymiarze";
+});
+
+btnApply.addEventListener("click", ()=>{
+  const mm = parseFloat(mmInput.value);
+  if (!lastPxDist || lastPxDist <= 0) {
+    out.textContent = "Najpierw zrób pomiar (klik A i B).";
+    return;
+  }
+  if (!mm || mm <= 0) {
+    out.textContent = "Wpisz realny wymiar w mm (np. 85.6).";
+    return;
+  }
+  mmPerPx = mm / lastPxDist;
+  scaleOut.textContent = `mm/px = ${mmPerPx.toFixed(6)}  (px/mm = ${(1/mmPerPx).toFixed(3)})`;
+
+  calibMode = false;
+  out.textContent = `Skalibrowane ✅ Teraz pomiary będą w mm/cm. Ostatni: ${fmtLen(lastPxDist)}`;
+  draw();
+});
+
+// jak bg.jpg nie istnieje – nadal działa na czarnym tle
+</script>
+</body>
+</html>
+"""
+
+class UniconHandler(BaseHTTPRequestHandler):
+    def _send_json(self, obj, code=200):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_html(self, html, code=200):
+        data = html.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_file(self, path, content_type):
+        if not os.path.exists(path):
+            self._send_json({"error": "file_not_found", "file": os.path.basename(path)}, 404)
+            return
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, fmt, *args):
+        # mniej spamu w konsoli
+        return
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+
+        if path == "/" or path == "/health":
+            return self._send_json({"status": "ok", "service": "UNICON_CORE", "port": PORT})
+
+        if path == "/imu":
+            return self._send_json(simulated_imu())
+
+        if path == "/hud":
+            return self._send_html(HUD_HTML)
+
+        if path == "/bg.jpg":
+            # obsłuży tło jeśli wrzucisz plik
+            return self._send_file(BG_PATH, "image/jpeg")
+
+        return self._send_json({"error": "not_found", "path": path}, 404)
+
+def main():
+    server = HTTPServer(("0.0.0.0", PORT), UniconHandler)
+    print(f"UNICON_CORE running on http://0.0.0.0:{PORT}")
+    print(f"Open: http://<PI_IP>:{PORT}/hud")
+    server.serve_forever()
+
+if __name__ == "__main__":
+    main()
+

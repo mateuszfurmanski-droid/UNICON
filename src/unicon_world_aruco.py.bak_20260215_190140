@@ -1,0 +1,127 @@
+import os
+import time
+import numpy as np
+import cv2
+from flask import Blueprint, jsonify
+
+bp_world = Blueprint("unicon_world_aruco_v1", __name__)
+
+DICT_NAME = os.environ.get("UNICON_ARUCO_DICT", "DICT_4X4_50")
+MARKER_SIZE_M = float(os.environ.get("UNICON_ARUCO_SIZE_M", "0.05"))  # 5cm
+FWD_M = float(os.environ.get("UNICON_WORLD_FWD_M", "1.0"))            # point 1m forward
+
+_LAST = {
+    "ok": False,
+    "ts": 0.0,
+    "rvec": None,
+    "tvec": None,
+    "w": 0,
+    "h": 0,
+    "A": None,
+    "B": None,
+    "reset": 0,
+    "last": None,
+}
+
+def _dict():
+    if hasattr(cv2.aruco, DICT_NAME):
+        return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, DICT_NAME))
+    return cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+
+_ARUCO_DICT = _dict()
+_ARUCO_PARAMS = cv2.aruco.DetectorParameters()
+_ARUCO_DET = cv2.aruco.ArucoDetector(_ARUCO_DICT, _ARUCO_PARAMS)
+
+def _K(w, h):
+    fx = 0.90 * w
+    fy = 0.90 * w
+    cx = w / 2.0
+    cy = h / 2.0
+    return np.array([[fx,0,cx],[0,fy,cy],[0,0,1]], dtype=np.float64)
+
+def _inv_pose(rvec, tvec):
+    R, _ = cv2.Rodrigues(rvec)
+    t = tvec.reshape(3,1)
+    Rcw = R.T
+    tcw = (-R.T @ t).reshape(3)
+    return Rcw, tcw
+
+def _world_point_forward(rvec, tvec, dist_m):
+    Rcw, tcw = _inv_pose(rvec, tvec)
+    p_cam = np.array([0.0, 0.0, dist_m], dtype=np.float64)
+    p_world = (Rcw @ p_cam.reshape(3,1)).reshape(3) + tcw
+    return p_world
+
+def on_btn(name: str):
+    name = (name or "").upper()
+    _LAST["last"] = name
+    if name == "RESET":
+        _LAST["A"] = None
+        _LAST["B"] = None
+        _LAST["reset"] = int(_LAST.get("reset", 0)) + 1
+        return
+    if name not in ("A", "B"):
+        return
+    if not _LAST["ok"] or _LAST["rvec"] is None or _LAST["tvec"] is None:
+        return
+    p = _world_point_forward(_LAST["rvec"], _LAST["tvec"], FWD_M)
+    _LAST[name] = [float(p[0]), float(p[1]), float(p[2])]
+
+def process_frame(frame):
+    try:
+        h, w = frame.shape[:2]
+        _LAST["w"] = int(w); _LAST["h"] = int(h)
+
+        corners, ids, _rej = _ARUCO_DET.detectMarkers(frame)
+        if ids is None or len(ids) == 0:
+            _LAST["ok"] = False
+            return
+
+        K = _K(w, h)
+        dist = np.zeros((5,1), dtype=np.float64)
+
+        rvecs, tvecs, _obj = cv2.aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE_M, K, dist)
+        rvec = rvecs[0].reshape(3,1)
+        tvec = tvecs[0].reshape(3,1)
+
+        _LAST["ok"] = True
+        _LAST["ts"] = time.time()
+        _LAST["rvec"] = rvec
+        _LAST["tvec"] = tvec
+
+        cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+        cv2.drawFrameAxes(frame, K, dist, rvec, tvec, MARKER_SIZE_M * 0.75)
+
+        if _LAST["A"] is not None and _LAST["B"] is not None:
+            A = np.array(_LAST["A"], dtype=np.float64).reshape(1,3)
+            B = np.array(_LAST["B"], dtype=np.float64).reshape(1,3)
+            a2d, _ = cv2.projectPoints(A, rvec, tvec, K, dist)
+            b2d, _ = cv2.projectPoints(B, rvec, tvec, K, dist)
+            ax, ay = int(a2d[0,0,0]), int(a2d[0,0,1])
+            bx, by = int(b2d[0,0,0]), int(b2d[0,0,1])
+            cv2.line(frame, (ax,ay), (bx,by), (0,255,0), 2)
+            cv2.circle(frame, (ax,ay), 5, (0,255,0), -1)
+            cv2.circle(frame, (bx,by), 5, (0,255,0), -1)
+            d = float(np.linalg.norm(A.reshape(3) - B.reshape(3)))
+            cv2.rectangle(frame, (0, 0), (w, 30), (0,0,0), -1)
+            cv2.putText(frame, f"WORLD d={d:.3f} m (aruco={MARKER_SIZE_M}m)", (8,22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,255,0), 1, cv2.LINE_AA)
+        else:
+            cv2.rectangle(frame, (0, 0), (w, 30), (0,0,0), -1)
+            cv2.putText(frame, "WORLD: show ArUco; press SET A then SET B; move PI", (8,22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0,255,0), 1, cv2.LINE_AA)
+    except Exception:
+        return
+
+@bp_world.route("/api/world/state")
+def api_world_state():
+    return jsonify({
+        "ok": bool(_LAST.get("ok")),
+        "ts": _LAST.get("ts"),
+        "A": _LAST.get("A"),
+        "B": _LAST.get("B"),
+        "reset": _LAST.get("reset"),
+        "last": _LAST.get("last"),
+        "aruco_size_m": MARKER_SIZE_M,
+        "fwd_m": FWD_M,
+    })

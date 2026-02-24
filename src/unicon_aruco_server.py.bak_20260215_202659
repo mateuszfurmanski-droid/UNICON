@@ -1,0 +1,119 @@
+from __future__ import annotations
+import os
+from typing import Any, Dict
+
+import cv2
+from flask import Flask, request, jsonify
+
+APP_NAME = "unicon_aruco_server"
+PORT = int(os.environ.get("UNICON_ARUCO_PORT", "8096"))
+DEFAULT_DEV = os.environ.get("UNICON_ARUCO_VIDEO", "/dev/video0")
+DICT_NAME = os.environ.get("UNICON_ARUCO_DICT", "DICT_4X4_50")
+
+app = Flask(APP_NAME)
+
+def _get_dict():
+    if not hasattr(cv2, "aruco"):
+        return None
+    aruco = cv2.aruco
+    if not hasattr(aruco, DICT_NAME):
+        return None
+    return aruco.getPredefinedDictionary(getattr(aruco, DICT_NAME))
+
+def _open_cam(dev: str):
+    cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+    if not cap or not cap.isOpened():
+        try:
+            if cap:
+                cap.release()
+        except Exception:
+            pass
+        return None
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+def _detect_once(dev: str) -> Dict[str, Any]:
+    if not hasattr(cv2, "aruco"):
+        return {"ok": False, "err": "opencv_no_aruco", "video": dev}
+
+    aruco_dict = _get_dict()
+    if aruco_dict is None:
+        return {"ok": False, "err": f"bad_dict:{DICT_NAME}", "video": dev}
+
+    params = cv2.aruco.DetectorParameters()
+    detector = cv2.aruco.ArucoDetector(aruco_dict, params)
+
+    cap = _open_cam(dev)
+    if cap is None:
+        return {"ok": False, "err": f"open_failed VIDEO={dev}", "video": dev}
+
+    try:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return {"ok": False, "err": "read_failed", "video": dev}
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, _rej = detector.detectMarkers(gray)
+
+        out: Dict[str, Any] = {
+            "ok": True,
+            "video": dev,
+            "dict": DICT_NAME,
+            "frame_w": int(frame.shape[1]),
+            "frame_h": int(frame.shape[0]),
+            "count": 0,
+            "markers": [],
+        }
+
+        if ids is None or len(ids) == 0:
+            return out
+
+        out["count"] = int(len(ids))
+        for i, mid in enumerate(ids.flatten().tolist()):
+            c = corners[i].reshape((4, 2))
+            cx = float(c[:, 0].mean())
+            cy = float(c[:, 1].mean())
+            out["markers"].append({
+                "id": int(mid),
+                "cx": cx,
+                "cy": cy,
+                "corners": [[float(x), float(y)] for (x, y) in c.tolist()],
+            })
+        return out
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+@app.get("/health")
+def health():
+    return jsonify({
+        "ok": True,
+        "service": "unicon_aruco_8096",
+        "opencv": cv2.__version__,
+        "has_aruco": bool(hasattr(cv2, "aruco")),
+        "dict": DICT_NAME,
+        "video": DEFAULT_DEV,
+    })
+
+@app.get("/api/aruco/test")
+def api_aruco_test():
+    dev = request.args.get("dev", DEFAULT_DEV)
+    return jsonify(_detect_once(dev))
+
+@app.get("/api/aruco")
+def api_aruco():
+    dev = request.args.get("dev", DEFAULT_DEV)
+    return jsonify(_detect_once(dev))
+
+@app.get("/api/world/aruco_test")
+def api_world_aruco_test():
+    dev = request.args.get("dev", DEFAULT_DEV)
+    return jsonify(_detect_once(dev))
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT, threaded=True)

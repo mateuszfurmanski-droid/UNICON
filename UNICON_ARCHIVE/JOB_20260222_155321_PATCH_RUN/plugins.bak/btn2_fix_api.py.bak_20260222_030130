@@ -1,0 +1,63 @@
+import time
+from flask import Blueprint, jsonify, request, make_response
+
+bp = Blueprint("plugin_btn2_fix_api_v1", __name__, url_prefix="/api")
+
+def _get_master_globals():
+    g = globals().get("__UNICON_MAIN_GLOBALS__")
+    return g if isinstance(g, dict) else {}
+
+def _get_btn2_state():
+    g = _get_master_globals()
+    st = g.get("_BTN2_STATE")
+    if isinstance(st, dict):
+        return st
+    return {"last": None, "A": None, "B": None, "reset": 0}
+
+def _set_btn2(name, xn=None, yn=None):
+    g = _get_master_globals()
+    fn = g.get("_btn2_set")
+    if callable(fn):
+        return fn(name, xn, yn)
+    st = _get_btn2_state()
+    st["last"] = name
+    if name in ("A","B") and xn is not None and yn is not None:
+        st[name] = {"x": float(xn), "y": float(yn)}
+    if name == "RESET":
+        st["A"] = None
+        st["B"] = None
+        st["reset"] = int(st.get("reset", 0)) + 1
+    if isinstance(g, dict):
+        g["_BTN2_STATE"] = st
+
+def _no_store(resp):
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+@bp.route("/btn2fix/state", methods=["GET"])
+def btn2fix_state():
+    payload = {"ok": True, "state": _get_btn2_state(), "ts": time.time(), "hint": {"poll_ms": 250}}
+    resp = make_response(jsonify(payload), 200)
+    return _no_store(resp)
+
+@bp.route("/btn2fix/<name>", methods=["GET","POST"])
+def btn2fix_set(name):
+    name = (name or "").upper()
+    if name not in ("A","B","RESET"):
+        resp = make_response(jsonify({"ok": False, "err": "bad name", "name": name}), 400)
+        return _no_store(resp)
+
+    xn = request.args.get("x", None)
+    yn = request.args.get("y", None)
+    try:
+        xn = float(xn) if xn is not None else None
+        yn = float(yn) if yn is not None else None
+    except Exception:
+        xn = None
+        yn = None
+
+    _set_btn2(name, xn, yn)
+    resp = make_response(jsonify({"ok": True, "btn": name, "state": _get_btn2_state(), "ts": time.time()}), 200)
+    return _no_store(resp)

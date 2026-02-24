@@ -1,0 +1,80 @@
+{
+  "schema_version": "v0.1",
+  "snag": {
+    "id": "string-uuid",
+    "created_at_utc": "YYYY-MM-DDTHH:MM:SSZ",
+    "updated_at_utc": "YYYY-MM-DDTHH:MM:SSZ",
+
+    "title": "string",
+    "issue_type": "WORKTOP|FRAME|CUT|GAPS|HINGE|FINAL",
+    "description": "string",
+
+    "status": "TODO|DOING|DONE",
+    "status_color": "NONE|GREEN|YELLOW|RED",
+
+    "site": {
+      "project_name": "string",
+      "room_name": "string",
+      "location_note": "string"
+    },
+
+    "reference": {
+      "photo_path": "string",
+      "photo_taken_at_utc": "YYYY-MM-DDTHH:MM:SSZ",
+      "manual_match_required": true,
+      "match_mode": "MANUAL|AUTO",
+      "match_score": 0.0
+    },
+
+    "anchor": {
+      "anchor_mode": "PIN|AUTO",
+      "anchor_pose": {
+        "tx_m": 0.0,
+        "ty_m": 0.0,
+        "tz_m": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0
+      }
+    },
+
+    "tool_session": {
+      "tool_id": "31|32|33|34|35|36",
+      "tool_name": "string",
+      "tool_version": "v0.1",
+      "run_count": 0,
+      "last_run_at_utc": "YYYY-MM-DDTHH:MM:SSZ"
+    },
+
+    "measurements": [
+      {
+        "timestamp_utc": "YYYY-MM-DDTHH:MM:SSZ",
+        "metric": "LEVEL_MM_PER_M|ANGLE_DEG|LENGTH_MM|GAP_MM|NOTE",
+        "axis": "X|Y|Z|NONE",
+        "value": 0.0,
+        "unit": "mm/m|deg|mm|text",
+        "tolerance": {
+          "green_max": 0.0,
+          "yellow_max": 0.0,
+          "red_min": 0.0
+        },
+        "result_color": "GREEN|YELLOW|RED|NONE",
+        "note": "string"
+      }
+    ],
+
+    "evidence": [
+      {
+        "timestamp_utc": "YYYY-MM-DDTHH:MM:SSZ",
+        "type": "SNAPSHOT|PHOTO|VIDEO",
+        "file_path": "string",
+        "comment": "string"
+      }
+    ],
+
+    "links": {
+      "related_snag_ids": []
+    }
+  }
+}

@@ -1,0 +1,4 @@
+IMU CALIBRATION DONE
+- Gyro bias computed and verified (corrected gyro ~0 rad/s at rest)
+- Accel shows ~10° tilt in test position (expected if not perfectly flat)
+- Next: true accel calibration (6-face) OR move to complementary filter.

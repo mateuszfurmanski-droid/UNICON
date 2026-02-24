@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# venv
+venv/
+venvs/
+.env
+
+# Logs / runtime
+*.log
+*.pid
+*.sock
+
+# Large / binary artifacts (keep out of git)
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.mp4
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temp
+tmp/
+.cache/

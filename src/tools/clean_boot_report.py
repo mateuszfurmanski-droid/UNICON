@@ -1,0 +1,68 @@
+import time
+from flask import Blueprint, jsonify, current_app, make_response, request
+
+bp = Blueprint("plugin_clean_boot_report_v1", __name__, url_prefix="/api")
+
+def _no_store(resp):
+    try:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return resp
+
+@bp.get("/bootreport")
+def bootreport():
+    app = current_app
+    vfs = getattr(app, "view_functions", {}) or {}
+    rules = []
+    try:
+        for r in app.url_map.iter_rules():
+            rules.append({
+                "rule": str(r),
+                "endpoint": getattr(r, "endpoint", ""),
+                "methods": sorted([m for m in (r.methods or []) if m not in ("HEAD","OPTIONS")]),
+            })
+    except Exception:
+        rules = []
+
+    def has_rule(prefix: str) -> bool:
+        for rr in rules:
+            if rr.get("rule","").startswith(prefix):
+                return True
+        return False
+
+    # Quick “legacy noise” indicators (non-fatal)
+    legacy = {
+        "has_api_btn_legacy": has_rule("/api/btn/"),
+        "has_api_btn2_direct": has_rule("/api/btn2/"),
+        "has_api_btn2fix": has_rule("/api/btn2fix/"),
+        "has_3d_endpoints": has_rule("/api/3d") or has_rule("/3d") or has_rule("/api/3d/"),
+        "has_modules_api": has_rule("/api/luna") or has_rule("/api/imu") or has_rule("/api/modules"),
+    }
+    # UNICON_LEGACY_FLAGS_FROM_ROUTES_V1
+    _rules = sorted(r.rule for r in current_app.url_map.iter_rules())
+    def _has_prefix(px):
+        return any(rule.startswith(px) for rule in _rules)
+    legacy_flags = {
+        "has_3d_endpoints": (_has_prefix("/3d") or _has_prefix("/api/3d/")),
+        "has_api_btn2_direct": _has_prefix("/api/btn2/"),
+        "has_api_btn2fix": _has_prefix("/api/btn2fix/"),
+        "has_api_btn_legacy": _has_prefix("/api/btn/"),
+        "has_modules_api": _has_prefix("/api/modules/"),
+    }
+
+
+    data = {
+        "ok": True,
+        "ts": time.time(),
+        "client": request.remote_addr,
+        "blueprints": sorted(list((getattr(app, "blueprints", {}) or {}).keys())),
+        "view_functions_count": len(vfs),
+        "routes_count": len(rules),
+        "legacy_flags": legacy,
+        "sample_routes": rules[:80],  # enough for sanity check without flooding
+    }
+    r = make_response(jsonify(data), 200)
+    return _no_store(r)

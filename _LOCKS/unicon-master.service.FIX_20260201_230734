@@ -1,0 +1,33 @@
+[Unit]
+Description=UNICON Master (cam+luna+imu+etc)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/UNICON
+
+# env (Twoje ustawienia portów itp.)
+EnvironmentFile=-/home/pi/UNICON/config/unicon.env
+
+# start
+ExecStart=/home/pi/UNICON/run/master.sh
+
+# autorestart
+Restart=always
+RestartSec=2
+
+# jak coś się zawiesi bez outputu, ubij i wznów
+WatchdogSec=0
+
+# logi do journala (czytelne)
+StandardOutput=journal
+StandardError=journal
+
+# opcjonalnie: wyczyść śmieci po ubiciu
+KillSignal=SIGINT
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

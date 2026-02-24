@@ -1,0 +1,590 @@
+(() => {
+  const stage = document.getElementById("stage");
+  const cam = document.getElementById("cam");
+  const canvas = document.getElementById("overlay");
+  const hud = document.getElementById("hudline");
+  const ctx = canvas.getContext("2d");
+
+  // ----------------------------
+  // VIEW (pan/zoom)
+  // ----------------------------
+  let zoom = 1.0;
+  let panX = 0;
+  let panY = 0;
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  function applyTransform() {
+    cam.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  }
+
+  // ----------------------------
+  // MEASUREMENTS
+  // each: { id:int, ts:number, A:{x,y}, B:{x,y} }
+  // ----------------------------
+  const measures = [];
+  let nextId = 1;
+
+  let curA = null;
+  let previewB = null;
+
+  const SNAP_PX = 14;
+
+  // ----------------------------
+  // LIVE SENSOR CACHE (from /health)
+  // ----------------------------
+  const sensor = {
+    dist_cm: null,
+    strength: null,
+    temp_c: null,
+    roll: null,
+    pitch: null,
+    fps: null,
+    ts: null,
+    ok: false,
+    imu_ok: false,
+    lidar_ok: false,
+    video_ok: false,
+  };
+
+  // ----------------------------
+  // CANVAS RESIZE
+  // ----------------------------
+  function resize() {
+    canvas.width = stage.clientWidth;
+    canvas.height = stage.clientHeight;
+    draw();
+  }
+  window.addEventListener("resize", resize);
+
+  // ----------------------------
+  // GEOMETRY / SNAP
+  // ----------------------------
+  function dist2(p, q) {
+    const dx = p.x - q.x;
+    const dy = p.y - q.y;
+    return dx * dx + dy * dy;
+  }
+
+  function pxDist(p1, p2) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function getMousePos(e) {
+    const rect = stage.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function snapPoint(p) {
+    let best = null;
+    let bestD2 = SNAP_PX * SNAP_PX;
+
+    if (curA && dist2(p, curA) <= bestD2) best = curA;
+
+    for (const m of measures) {
+      if (m.A && dist2(p, m.A) <= bestD2) best = m.A;
+      if (m.B && dist2(p, m.B) <= bestD2) best = m.B;
+    }
+
+    return best
+      ? { x: best.x, y: best.y, snapped: true }
+      : { x: p.x, y: p.y, snapped: false };
+  }
+
+  // ----------------------------
+  // DRAWING (style = thin green)
+  // ----------------------------
+  function clear() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function drawCrosshair() {
+    const w = canvas.width,
+      h = canvas.height;
+    const cx = w / 2,
+      cy = h / 2;
+
+    ctx.strokeStyle = "rgba(124,255,124,0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 14, cy);
+    ctx.lineTo(cx + 14, cy);
+    ctx.moveTo(cx, cy - 14);
+    ctx.lineTo(cx, cy + 14);
+    ctx.stroke();
+  }
+
+  function drawDot(p, r = 4, alpha = 0.95) {
+    ctx.fillStyle = `rgba(124,255,124,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawLine(p1, p2, alpha = 0.95, width = 2) {
+    ctx.strokeStyle = `rgba(124,255,124,${alpha})`;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+
+  function drawSnapHint(p) {
+    ctx.strokeStyle = "rgba(124,255,124,0.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, SNAP_PX, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawLabel(p1, p2, text, alphaBg = 0.55, alphaFg = 0.95) {
+    const mx = (p1.x + p2.x) / 2;
+    const my = (p1.y + p2.y) / 2;
+
+    // background
+    ctx.fillStyle = `rgba(0,0,0,${alphaBg})`;
+    ctx.fillRect(mx - 60, my - 20, 140, 22);
+
+    // text
+    ctx.fillStyle = `rgba(124,255,124,${alphaFg})`;
+    ctx.font = "14px Arial";
+    ctx.fillText(text, mx - 56, my - 4);
+  }
+
+  function drawMeasure(m) {
+    drawLine(m.A, m.B, 0.95, 2);
+    drawDot(m.A, 4, 0.95);
+    drawDot(m.B, 4, 0.95);
+    const d = pxDist(m.A, m.B);
+    drawLabel(m.A, m.B, `#${m.id}  ${d.toFixed(0)} px`, 0.45, 0.95);
+  }
+
+  // optional: show "level line" based on roll
+  function drawLevelLine() {
+    if (sensor.roll == null) return;
+
+    const w = canvas.width,
+      h = canvas.height;
+    const cx = w / 2,
+      cy = h / 2;
+
+    const ang = (sensor.roll * Math.PI) / 180.0;
+    const L = Math.floor(Math.min(w, h) * 0.35);
+
+    const x1 = Math.floor(cx - L * Math.cos(ang));
+    const y1 = Math.floor(cy - L * Math.sin(ang));
+    const x2 = Math.floor(cx + L * Math.cos(ang));
+    const y2 = Math.floor(cy + L * Math.sin(ang));
+
+    ctx.strokeStyle = "rgba(124,255,124,0.75)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  function draw() {
+    clear();
+    drawCrosshair();
+    drawLevelLine();
+
+    // saved
+    for (const m of measures) drawMeasure(m);
+
+    // current preview
+    if (curA && previewB) {
+      const sp = snapPoint(previewB);
+      if (sp.snapped) drawSnapHint(sp);
+      drawLine(curA, sp, 0.55, 2);
+      drawDot(curA, 4, 0.95);
+      drawDot(sp, 3, 0.75);
+      const d = pxDist(curA, sp);
+      drawLabel(curA, sp, `NEW  ${d.toFixed(0)} px`, 0.45, 0.75);
+    }
+  }
+
+  // ----------------------------
+  // DELETE nearest (Alt+Click)
+  // ----------------------------
+  function deleteNearest(p) {
+    let bestIdx = -1;
+    let best = 1e18;
+
+    for (let i = 0; i < measures.length; i++) {
+      const m = measures[i];
+      const dA = dist2(p, m.A);
+      const dB = dist2(p, m.B);
+      const d = Math.min(dA, dB);
+      if (d < best) {
+        best = d;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0 && best <= 26 * 26) {
+      measures.splice(bestIdx, 1);
+      draw();
+      scheduleSave();
+      return true;
+    }
+    return false;
+  }
+
+  // ----------------------------
+  // API: live_job (auto load/save)
+  // ----------------------------
+  let saveTimer = null;
+  let saving = false;
+  let pendingSave = false;
+
+  function scheduleSave(immediate = false) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveLiveJobNow(), immediate ? 0 : 250);
+  }
+
+  async function loadLiveJob() {
+    try {
+      const r = await fetch("/api/live_job", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = await r.json();
+
+      measures.length = 0;
+      if (Array.isArray(j.measurements)) {
+        for (const m of j.measurements) {
+          if (!m || !m.A || !m.B) continue;
+          measures.push({
+            id: Number(m.id) || 0,
+            ts: Number(m.ts) || Date.now(),
+            A: { x: Number(m.A.x), y: Number(m.A.y) },
+            B: { x: Number(m.B.x), y: Number(m.B.y) },
+          });
+        }
+      }
+
+      // nextId
+      nextId = Number(j.next_id) || 1;
+      if (nextId < 1) nextId = 1;
+
+      draw();
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  async function saveLiveJobNow() {
+    if (saving) {
+      pendingSave = true;
+      return;
+    }
+    saving = true;
+
+    const payload = {
+      version: 1,
+      updated_ts: Date.now() / 1000,
+      next_id: nextId,
+      measurements: measures.map((m) => ({
+        id: m.id,
+        ts: m.ts,
+        A: { x: m.A.x, y: m.A.y },
+        B: { x: m.B.x, y: m.B.y },
+      })),
+    };
+
+    try {
+      const r = await fetch("/api/live_job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      // jeśli nie ok: i tak nie wywalaj UI
+      await r.text().catch(() => {});
+    } catch (e) {
+      // ignore
+    } finally {
+      saving = false;
+      if (pendingSave) {
+        pendingSave = false;
+        scheduleSave(true);
+      }
+    }
+  }
+
+  // ----------------------------
+  // API: health (LiDAR/IMU HUD)
+  // ----------------------------
+  function fmt(n, digits = 1) {
+    if (n == null || Number.isNaN(n)) return "--";
+    return Number(n).toFixed(digits);
+  }
+
+  async function pollHealth() {
+    try {
+      const r = await fetch("/health", { cache: "no-store" });
+      if (!r.ok) throw new Error("health " + r.status);
+      const j = await r.json();
+
+      const L = j.latest || {};
+      const S = j.status || {};
+
+      sensor.dist_cm = L.dist_cm ?? null;
+      sensor.strength = L.strength ?? null;
+      sensor.temp_c = L.temp_c ?? null;
+      sensor.roll = L.roll ?? null;
+      sensor.pitch = L.pitch ?? null;
+      sensor.fps = L.fps ?? null;
+      sensor.ts = L.ts ?? null;
+
+      sensor.ok = !!j.ok;
+      sensor.imu_ok = !!S.imu_ok;
+      sensor.lidar_ok = !!S.lidar_ok;
+      sensor.video_ok = !!S.video_ok;
+
+      hud.textContent =
+        `L:${fmt(sensor.dist_cm, 1)}cm ` +
+        `S:${sensor.strength ?? "--"} ` +
+        `T:${fmt(sensor.temp_c, 1)}C ` +
+        `R:${fmt(sensor.roll, 2)}° ` +
+        `P:${fmt(sensor.pitch, 2)}° ` +
+        `FPS:${fmt(sensor.fps, 1)} ` +
+        `[V:${sensor.video_ok ? "1" : "0"} I:${sensor.imu_ok ? "1" : "0"} L:${sensor.lidar_ok ? "1" : "0"}]`;
+    } catch (e) {
+      hud.textContent = "health: fetch failed";
+    }
+
+    draw(); // odśwież level line
+  }
+
+  // ----------------------------
+  // INTERACTIONS
+  // ----------------------------
+  stage.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  stage.addEventListener("mousedown", (e) => {
+    // RMB:
+    // - if building: cancel segment
+    // - else: clear ALL
+    if (e.button === 2) {
+      if (curA || previewB) {
+        curA = null;
+        previewB = null;
+      } else {
+        measures.length = 0;
+        nextId = 1;
+        scheduleSave(true);
+      }
+      draw();
+      return;
+    }
+
+    // SHIFT+LMB: pan
+    if (e.shiftKey && e.button === 0) {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      return;
+    }
+
+    // ALT+LMB: delete nearest
+    if (e.altKey && e.button === 0) {
+      const p = getMousePos(e);
+      deleteNearest(p);
+      return;
+    }
+
+    // LMB: set A then set B then SAVE and immediately ready for next
+    if (e.button === 0) {
+      const p = getMousePos(e);
+
+      if (!curA) {
+        const sp = snapPoint(p);
+        curA = { x: sp.x, y: sp.y };
+        previewB = null;
+        draw();
+        return;
+      }
+
+      const sp = snapPoint(p);
+      const B = { x: sp.x, y: sp.y };
+
+      measures.push({ A: curA, B, id: nextId++, ts: Date.now() });
+
+      // reset for next measure
+      curA = null;
+      previewB = null;
+
+      draw();
+      scheduleSave();
+    }
+  });
+
+  stage.addEventListener("mousemove", (e) => {
+    if (dragging) {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      panX += dx;
+      panY += dy;
+      applyTransform();
+      return;
+    }
+
+    if (curA) {
+      previewB = getMousePos(e);
+      draw();
+    }
+  });
+
+  stage.addEventListener("mouseup", () => {
+    dragging = false;
+  });
+
+  stage.addEventListener("mouseleave", () => {
+    dragging = false;
+  });
+
+  stage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const delta = Math.sign(e.deltaY);
+    const factor = delta > 0 ? 0.92 : 1.08;
+    zoom *= factor;
+    zoom = Math.max(0.4, Math.min(3.0, zoom));
+    applyTransform();
+  }, { passive: false });
+
+  // ----------------------------
+  // BOOT
+  // ----------------------------
+  function boot() {
+    applyTransform();
+    resize();
+
+    // load saved measures first
+    loadLiveJob();
+
+    // start loops
+    pollHealth();
+    setInterval(pollHealth, 350); // HUD responsive
+    setInterval(loadLiveJob, 3000); // sync if needed
+  }
+
+  boot();
+})();
+
+
+
+// UNICON_SLIDE_MENU_JS_V1
+(function(){
+  function $(id){ return document.getElementById(id); }
+
+  const openBtn  = $("btnOpenMenu");
+  const panel    = $("uniconMenuPanel");
+  const backdrop = $("uniconMenuBackdrop");
+  const out      = $("uniconMenuOut");
+
+  function show(){
+    if (!panel || !backdrop) return;
+    backdrop.style.display = "block";
+    panel.classList.add("open");
+    panel.setAttribute("aria-hidden","false");
+    backdrop.setAttribute("aria-hidden","false");
+  }
+
+  function hide(){
+    if (!panel || !backdrop) return;
+    panel.classList.remove("open");
+    panel.setAttribute("aria-hidden","true");
+    backdrop.setAttribute("aria-hidden","true");
+    backdrop.style.display = "none";
+  }
+
+  async function fetchJson(url){
+    if (out) out.textContent = "Loading " + url + " ...";
+    try{
+      const r = await fetch(url, { cache: "no-store" });
+      const t = await r.text();
+      try{
+        const j = JSON.parse(t);
+        if (out) out.textContent = JSON.stringify(j, null, 2);
+      }catch(_){
+        if (out) out.textContent = t;
+      }
+    }catch(err){
+      if (out) out.textContent = "ERROR: " + String(err);
+    }
+  }
+
+  if (openBtn) openBtn.addEventListener("click", () => show());
+  if (backdrop) backdrop.addEventListener("click", () => hide());
+
+  const closeA = $("btnCloseMenu");
+  const closeB = $("btnCloseMenuTop");
+  if (closeA) closeA.addEventListener("click", () => hide());
+  if (closeB) closeB.addEventListener("click", () => hide());
+
+  const btnTest8090 = $("btnTest8090");
+  const btnHealth   = $("btnHealth");
+  const btnLiveJob  = $("btnLiveJob");
+  const btnDebugImu = $("btnDebugImu");
+  const btnCamMjpg  = $("btnCamMjpg");
+  const btnRoot     = $("btnRoot");
+  const btnHud      = $("btnHud");
+
+  if (btnTest8090) btnTest8090.addEventListener("click", () => fetchJson("/health"));
+  if (btnHealth)   btnHealth.addEventListener("click", () => fetchJson("/health"));
+  if (btnLiveJob)  btnLiveJob.addEventListener("click", () => fetchJson("/api/live_job"));
+  if (btnDebugImu) btnDebugImu.addEventListener("click", () => window.open("/debug_imu","_blank"));
+  if (btnCamMjpg)  btnCamMjpg.addEventListener("click", () => window.open("/cam.mjpg","_blank"));
+  if (btnRoot)     btnRoot.addEventListener("click", () => window.location.href="/");
+
+  if (btnHud) btnHud.addEventListener("click", () => {
+    const overlay = document.getElementById("overlay");
+    if (!overlay){ if (out) out.textContent="HUD overlay not found"; return; }
+    const on = (overlay.style.display !== "none");
+    overlay.style.display = on ? "none" : "block";
+    if (out) out.textContent = "HUD overlay = " + (on ? "OFF" : "ON");
+  });
+
+})();
+
+
+
+// UNICON_MENU_WIRING_FORCE_V1
+(function(){
+  function $(id){ return document.getElementById(id); }
+
+  function closeMenu(){
+    const panel = $("uniconMenuPanel");
+    const back  = $("uniconMenuBackdrop");
+    if (panel) { panel.classList.remove("open"); panel.setAttribute("aria-hidden","true"); }
+    if (back)  { back.style.display = "none"; back.setAttribute("aria-hidden","true"); }
+  }
+
+  function openMenu(){
+    const panel = $("uniconMenuPanel");
+    const back  = $("uniconMenuBackdrop");
+    if (back)  { back.style.display = "block"; back.setAttribute("aria-hidden","false"); }
+    if (panel) { panel.classList.add("open"); panel.setAttribute("aria-hidden","false"); }
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    // ALWAYS start closed (fix 'menu stuck in layout')
+    closeMenu();
+
+    const btn = $("btnOpenMenu");
+    const back = $("uniconMenuBackdrop");
+    const x1 = $("btnCloseMenuTop");
+    const x2 = $("btnCloseMenu");
+
+    if (btn) btn.onclick = openMenu;
+    if (back) back.onclick = closeMenu;
+    if (x1) x1.onclick = closeMenu;
+    if (x2) x2.onclick = closeMenu;
+  });
+})();
+

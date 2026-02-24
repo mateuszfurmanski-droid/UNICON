@@ -1,0 +1,16 @@
+{
+  "selector_version": "v0.1",
+  "primary_rule": "issue_type",
+  "mapping": {
+    "WORKTOP": "31",
+    "FRAME": "32",
+    "CUT": "33",
+    "GAPS": "34",
+    "HINGE": "35",
+    "FINAL": "36"
+  },
+  "fallback": {
+    "unknown_issue_type": "36",
+    "notes": "If issue_type is unknown, show FINAL CLIENT CHECK summary and request manual tool selection."
+  }
+}

@@ -1,0 +1,80 @@
+# aruco_api_v1.py
+# Minimal ArUco API (in-process frame hook; no HTTP self-call)
+
+from __future__ import annotations
+import time
+import importlib
+from flask import Blueprint, request, jsonify
+
+aruco_bp = Blueprint("aruco_bp", __name__)
+
+def _get_frame_from_master():
+    try:
+        m = importlib.import_module("cam_dual_hud_web")
+    except Exception:
+        return None, {"hook":"import_fail"}
+    fn = getattr(m, "unicon_get_last_frame_bgr", None)
+    ts = float(getattr(m, "LAST_FRAME_TS", 0.0) or 0.0)
+    if not callable(fn):
+        return None, {"hook":"missing_fn", "ts":ts, "age": (time.time()-ts) if ts>0 else None}
+    try:
+        frame = fn()
+    except Exception as e:
+        return None, {"hook":"fn_exc", "msg":str(e), "ts":ts, "age": (time.time()-ts) if ts>0 else None}
+    meta = {"hook":"ok", "ts":ts, "age": (time.time()-ts) if ts>0 else None}
+    return frame, meta
+
+def _aruco_detect(frame_bgr, dict_name: str):
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        return {"ok": False, "err": "deps", "msg": str(e), "ids": [], "corners": []}
+
+    if frame_bgr is None:
+        return {"ok": False, "err": "no_frame", "ids": [], "corners": []}
+
+    try:
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    except Exception:
+        gray = frame_bgr
+
+    DICTS = {
+        "DICT_4X4_50": cv2.aruco.DICT_4X4_50,
+        "DICT_4X4_100": cv2.aruco.DICT_4X4_100,
+        "DICT_5X5_50": cv2.aruco.DICT_5X5_50,
+        "DICT_6X6_50": cv2.aruco.DICT_6X6_50,
+    }
+    dkey = DICTS.get(dict_name, cv2.aruco.DICT_4X4_50)
+    aruco_dict = cv2.aruco.getPredefinedDictionary(dkey)
+    params = cv2.aruco.DetectorParameters()
+
+    try:
+        detector = cv2.aruco.ArucoDetector(aruco_dict, params)
+        corners, ids, _ = detector.detectMarkers(gray)
+    except Exception:
+        corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=params)
+
+    ids_list = ids.flatten().tolist() if ids is not None else []
+    corners_list = []
+    for c in corners or []:
+        try:
+            corners_list.append([[float(x), float(y)] for [[x, y]] in c.reshape(-1, 1, 2)])
+        except Exception:
+            pass
+
+    return {"ok": True, "err": None, "ids": ids_list, "corners": corners_list}
+
+@aruco_bp.get("/api/aruco/test_v1")
+def aruco_test_v1():
+    dict_name = request.args.get("dict", "DICT_4X4_50")
+    ttl = float(request.args.get("ttl", "0.25"))
+    t0 = time.time()
+
+    frame, meta = _get_frame_from_master()
+    if frame is None:
+        return jsonify(ok=False, err="no_frame", dict=dict_name, ids=[], corners=[], ts=time.time(), meta=meta, ttl=ttl, dt=time.time()-t0)
+
+    res = _aruco_detect(frame, dict_name=dict_name)
+    res.update({"dict": dict_name, "ts": time.time(), "meta": meta, "ttl": ttl, "dt": time.time()-t0})
+    return jsonify(res)

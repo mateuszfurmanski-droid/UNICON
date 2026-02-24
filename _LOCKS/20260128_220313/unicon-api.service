@@ -1,0 +1,15 @@
+[Unit]
+Description=UNICON API (HUD + /api/luna) on :8088
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/bin/python3 /home/pi/UNICON/api/unicon_api.py
+Restart=always
+RestartSec=0.5
+
+[Install]
+WantedBy=multi-user.target

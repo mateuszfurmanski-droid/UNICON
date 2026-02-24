@@ -1,0 +1,55 @@
+{
+  "schema_version": "v0.1",
+  "project": {
+    "project_id": "proj-001",
+    "project_name": "Flat refurbishment",
+    "created_at_utc": "2025-12-20T10:00:00Z"
+  },
+  "snag_list": [
+    {
+      "id": "snag-worktop-001",
+      "title": "Kitchen worktop level check",
+      "issue_type": "WORKTOP",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Kitchen",
+      "reference_photo_path": "photos/worktop_ref_001.jpg",
+      "tool_id": "31",
+      "tool_name": "WORKTOP LEVEL + MEASURE"
+    },
+    {
+      "id": "snag-frame-001",
+      "title": "Door frame set true (3D plumb)",
+      "issue_type": "FRAME",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Hallway",
+      "reference_photo_path": "photos/frame_ref_001.jpg",
+      "tool_id": "32",
+      "tool_name": "FRAME PLUMB 3D"
+    },
+    {
+      "id": "snag-gaps-001",
+      "title": "Door gaps consistency check",
+      "issue_type": "GAPS",
+      "status": "TODO",
+      "status_color": "NONE",
+      "room_name": "Bedroom",
+      "reference_photo_path": "photos/gaps_ref_001.jpg",
+      "tool_id": "34",
+      "tool_name": "DOOR GAP TOLERANCE"
+    }
+  ],
+  "tool_selection_rules": {
+    "WORKTOP": "31",
+    "FRAME": "32",
+    "CUT": "33",
+    "GAPS": "34",
+    "HINGE": "35",
+    "FINAL": "36"
+  },
+  "mvp_location_matching": {
+    "mode": "MANUAL",
+    "user_action": "Align camera with reference photo then PIN anchor"
+  }
+}

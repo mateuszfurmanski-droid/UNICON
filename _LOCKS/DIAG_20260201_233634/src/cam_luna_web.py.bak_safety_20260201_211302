@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+# UNICON Operate V1: Camera (MJPEG) + IMU (ICM20948 accel tilt) + LiDAR (TF-Luna) + Web UI (Live Job)
+
+import time
+import threading
+import math
+
+import cv2
+import serial
+import smbus
+from flask import Flask, Response, jsonify, render_template
+
+# ======================
+# CONFIG
+# ======================
+HOST = "0.0.0.0"
+PORT = 8090
+
+VIDEO_DEV = "/dev/video0"
+
+# TF-Luna on Pi UART
+LIDAR_PORT = "/dev/serial0"
+LIDAR_BAUD = 115200
+
+# IMU I2C (ICM20948 often at 0x68)
+IMU_ENABLED = True
+IMU_I2C_BUS = 1
+IMU_ADDR = 0x68
+
+# Camera defaults
+CAM_WIDTH = 640
+CAM_HEIGHT = 480
+CAM_FPS = 15
+FORCE_MJPG = True
+
+# Overlay style (only for debug text in stream; UI is mostly in HTML/Canvas)
+OVERLAY_COLOR = (0, 255, 0)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+# ======================
+# STATE
+# ======================
+app = Flask(__name__)
+
+status = {
+    "boot_ts": time.time(),
+    "errors": [],
+    "video_ok": False,
+    "imu_ok": False,
+    "lidar_ok": False,
+}
+
+latest = {
+    "ts": None,
+    "dist_cm": None,
+    "strength": None,
+    "temp_c": None,
+    "roll": None,
+    "pitch": None,
+    "fps": None,
+}
+
+
+def set_error(tag, e):
+    msg = f"{tag}: {repr(e)}"
+    status["errors"].append(msg)
+    status["errors"] = status["errors"][-30:]
+
+
+# ======================
+# LiDAR (TF-Luna) parsing
+# ======================
+def read_exact(ser, n):
+    buf = bytearray()
+    while len(buf) < n:
+        b = ser.read(n - len(buf))
+        if not b:
+            return None
+        buf.extend(b)
+    return bytes(buf)
+
+
+def lidar_loop():
+    while True:
+        ser = None
+        try:
+            ser = serial.Serial(LIDAR_PORT, LIDAR_BAUD, timeout=0.2)
+            time.sleep(0.2)
+            status["lidar_ok"] = True
+
+            while True:
+                b1 = ser.read(1)
+                if not b1 or b1[0] != 0x59:
+                    continue
+                b2 = ser.read(1)
+                if not b2 or b2[0] != 0x59:
+                    continue
+
+                payload = read_exact(ser, 7)
+                if not payload:
+                    continue
+
+                frame = b"\x59\x59" + payload
+                if (sum(frame[:8]) & 0xFF) != frame[8]:
+                    continue
+
+                dist = frame[2] | (frame[3] << 8)  # TF-Luna usually reports cm
+                strength = frame[4] | (frame[5] << 8)
+                temp = (frame[6] | (frame[7] << 8)) / 8.0 - 256.0
+
+                latest["ts"] = time.time()
+                latest["dist_cm"] = float(dist)
+                latest["strength"] = int(strength)
+                latest["temp_c"] = round(temp, 1)
+                status["lidar_ok"] = True
+
+        except Exception as e:
+            status["lidar_ok"] = False
+            set_error("lidar_loop", e)
+            try:
+                if ser:
+                    ser.close()
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+
+# ======================
+# IMU (ICM-20948 accel-only)
+# ======================
+REG_BANK_SEL = 0x7F
+PWR_MGMT_1 = 0x06
+PWR_MGMT_2 = 0x07
+ACCEL_XOUT_H = 0x2D
+
+
+def i16(h, l):
+    v = (h << 8) | l
+    return v - 65536 if (v & 0x8000) else v
+
+
+def imu_select_bank(bus, b):
+    bus.write_byte_data(IMU_ADDR, REG_BANK_SEL, (b & 3) << 4)
+    time.sleep(0.002)
+
+
+def imu_read6(bus, reg):
+    d = bus.read_i2c_block_data(IMU_ADDR, reg, 6)
+    ax = i16(d[0], d[1])
+    ay = i16(d[2], d[3])
+    az = i16(d[4], d[5])
+    return ax, ay, az
+
+
+def imu_loop():
+    if not IMU_ENABLED:
+        return
+
+    try:
+        bus = smbus.SMBus(IMU_I2C_BUS)
+        imu_select_bank(bus, 0)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_1, 0x01)
+        time.sleep(0.05)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_2, 0x00)
+        time.sleep(0.05)
+        status["imu_ok"] = True
+    except Exception as e:
+        status["imu_ok"] = False
+        set_error("imu_init", e)
+        return
+
+    while True:
+        try:
+            imu_select_bank(bus, 0)
+            ax, ay, az = imu_read6(bus, ACCEL_XOUT_H)
+
+            roll = math.degrees(math.atan2(ay, az))
+            pitch = math.degrees(math.atan2(-ax, math.sqrt(ay * ay + az * az)))
+
+            latest["roll"] = round(roll, 2)
+            latest["pitch"] = round(pitch, 2)
+            status["imu_ok"] = True
+
+            time.sleep(0.05)
+        except Exception as e:
+            status["imu_ok"] = False
+            set_error("imu_loop", e)
+            time.sleep(0.25)
+
+
+# ======================
+# CAMERA STREAM (MJPEG)
+# ======================
+def camera_open():
+    cap = cv2.VideoCapture(VIDEO_DEV, cv2.CAP_V4L2)
+    if FORCE_MJPG:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
+    time.sleep(0.2)
+    return cap
+
+
+def mjpeg_frames():
+    cap = camera_open()
+
+    t0 = time.time()
+    frames = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            status["video_ok"] = False
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.2)
+            cap = camera_open()
+            continue
+
+        status["video_ok"] = True
+
+        frames += 1
+        t1 = time.time()
+        if t1 - t0 >= 1.0:
+            latest["fps"] = round(frames / (t1 - t0), 1)
+            t0 = t1
+            frames = 0
+
+        # optional small debug text (real UI is HTML overlay)
+        txt = f"LiDAR {latest.get('dist_cm')}cm  R:{latest.get('roll')} P:{latest.get('pitch')}  {latest.get('fps')}"
+        # UNICON: top-left debug/help disabled
+        if False:
+            cv2.putText(frame, txt, (10, 25), FONT, 0.6, OVERLAY_COLOR, 1)
+
+
+        ret, jpg = cv2.imencode(".jpg", frame)
+        if not ret:
+            continue
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+
+
+# ======================
+# ROUTES
+# ======================
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/cam.mjpg")
+def cam():
+    return Response(mjpeg_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "status": status, "latest": latest})
+
+
+
+# --- API: live_job (V1 placeholder) ---
+LIVE_JOB_STATE = {
+    "mode": "live_job",
+    "p1": None,
+    "p2": None,
+    "last": [],
+}
+
+@app.route("/api/live_job", methods=["GET"])
+def api_live_job():
+    return jsonify(LIVE_JOB_STATE)
+
+@app.route("/debug_imu")
+def debug_imu():
+    return jsonify({
+        "roll": latest.get("roll"),
+        "pitch": latest.get("pitch"),
+        "info": "UI uses roll/pitch; later we add calibration offsets & axis flip."
+    })
+
+
+if __name__ == "__main__":
+    threading.Thread(target=lidar_loop, daemon=True).start()
+    threading.Thread(target=imu_loop, daemon=True).start()
+    app.run(host=HOST, port=PORT, threaded=True)
+
+# [INFO] RULER_TUNING: no matching patterns found (kept baseline)

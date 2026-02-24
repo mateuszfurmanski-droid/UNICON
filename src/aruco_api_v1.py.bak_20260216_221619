@@ -1,0 +1,57 @@
+from flask import Blueprint, jsonify, request
+import cv2
+import numpy as np
+import urllib.request
+
+aruco_bp = Blueprint("aruco_bp", __name__)
+
+def _read_one_jpeg_from_mjpeg(url: str, max_bytes: int = 8_000_000):
+    req = urllib.request.Request(url, headers={"User-Agent": "UNICON"})
+    with urllib.request.urlopen(req, timeout=3) as r:
+        buf = bytearray()
+        while len(buf) < max_bytes:
+            chunk = r.read(4096)
+            if not chunk:
+                break
+            buf += chunk
+            a = buf.find(b"\xff\xd8")
+            b = buf.find(b"\xff\xd9")
+            if a != -1 and b != -1 and b > a:
+                jpg = bytes(buf[a:b+2])
+                arr = np.frombuffer(jpg, dtype=np.uint8)
+                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    return None
+                return frame
+    return None
+
+def _detect_once(stream_url="http://127.0.0.1:8095/cam.mjpg", dict_name="DICT_4X4_50"):
+    frame = _read_one_jpeg_from_mjpeg(stream_url)
+    if frame is None:
+        return {"ok": False, "error": f"no_frame stream={stream_url}"}
+
+    d = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_4X4_50)
+    dictionary = cv2.aruco.getPredefinedDictionary(d)
+    params = cv2.aruco.DetectorParameters()
+    det = cv2.aruco.ArucoDetector(dictionary, params)
+
+    corners, ids, _ = det.detectMarkers(frame)
+    ids_list = [] if ids is None else [int(x) for x in ids.flatten().tolist()]
+
+    return {
+        "ok": True,
+        "stream": stream_url,
+        "size": [int(frame.shape[1]), int(frame.shape[0])],
+        "markers": int(0 if ids is None else len(ids_list)),
+        "ids": ids_list,
+    }
+
+@aruco_bp.get("/api/aruco/test_v1")
+def aruco_test_v1():
+    stream = request.args.get("stream", "http://127.0.0.1:8095/cam.mjpg")
+    dict_name = request.args.get("dict", "DICT_4X4_50")
+    return jsonify(_detect_once(stream_url=stream, dict_name=dict_name))
+
+@aruco_bp.get("/api/aruco/state_v1")
+def aruco_state_v1():
+    return jsonify({"ok": True, "endpoints": ["/api/aruco/test_v1", "/api/aruco/state_v1"]})

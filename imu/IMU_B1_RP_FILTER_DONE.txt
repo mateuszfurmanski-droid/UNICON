@@ -1,0 +1,3 @@
+IMU B1 DONE
+- Complementary filter roll/pitch OK @ ~100Hz (dt ~10ms)
+- Rest angle reflects real mounting tilt (~+9.8deg pitch)

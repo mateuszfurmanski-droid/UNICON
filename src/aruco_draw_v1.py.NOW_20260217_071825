@@ -1,0 +1,105 @@
+import time
+import cv2
+import numpy as np
+
+class ArucoTracker:
+    def __init__(self, dict_name="DICT_4X4_50", interval_s=0.25):
+        self.dict_name = dict_name
+        self.interval_s = float(interval_s)
+        self._last_t = 0.0
+        self._last = {"ok": False, "markers": 0, "ids": [], "anchor_v1": None}
+        self._have_aruco = hasattr(cv2, "aruco")
+
+        if self._have_aruco:
+            d = getattr(cv2.aruco, dict_name, cv2.aruco.DICT_4X4_50)
+            self._dictionary = cv2.aruco.getPredefinedDictionary(d)
+            # OpenCV variants: DetectorParameters() or DetectorParameters_create()
+            try:
+                self._params = cv2.aruco.DetectorParameters()
+            except Exception:
+                self._params = cv2.aruco.DetectorParameters_create()
+            self._detector = None
+            if hasattr(cv2.aruco, "ArucoDetector"):
+                try:
+                    self._detector = cv2.aruco.ArucoDetector(self._dictionary, self._params)
+                except Exception:
+                    self._detector = None
+
+    def last(self):
+        return self._last
+
+    def _detect(self, frame_bgr):
+        if (not self._have_aruco) or frame_bgr is None:
+            return {"ok": False, "error": "no_aruco_or_no_frame", "markers": 0, "ids": [], "anchor_v1": None}
+
+        # keep it fast: detect on grayscale
+        try:
+            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        except Exception:
+            gray = frame_bgr
+
+        corners, ids = None, None
+        if self._detector is not None:
+            try:
+                corners, ids, _rej = self._detector.detectMarkers(gray)
+            except Exception:
+                corners, ids = None, None
+        else:
+            try:
+                corners, ids, _rej = cv2.aruco.detectMarkers(gray, self._dictionary, parameters=self._params)
+            except Exception:
+                corners, ids = None, None
+
+        ids_list = [] if ids is None else [int(x) for x in ids.flatten().tolist()]
+        anchor = None
+        if ids is not None and len(ids_list) > 0 and corners is not None and len(corners) > 0:
+            # choose first marker
+            c = corners[0]
+            # c shape: (1,4,2) or (4,2)
+            pts = c.reshape(-1, 2).astype(float)
+            cx = float(np.mean(pts[:, 0]))
+            cy = float(np.mean(pts[:, 1]))
+            anchor = {
+                "id": int(ids_list[0]),
+                "corners_px": [[float(x), float(y)] for (x, y) in pts.tolist()],
+                "center_px": [cx, cy],
+            }
+
+        return {
+            "ok": True,
+            "markers": int(0 if ids is None else len(ids_list)),
+            "ids": ids_list,
+            "anchor_v1": anchor,
+        }
+
+    def update_if_due(self, frame_bgr):
+        now = time.monotonic()
+        if (now - self._last_t) < self.interval_s:
+            return self._last
+        self._last_t = now
+        self._last = self._detect(frame_bgr)
+        return self._last
+
+    def draw(self, frame_bgr):
+        if frame_bgr is None:
+            return frame_bgr
+
+        res = self.update_if_due(frame_bgr)
+        anchor = res.get("anchor_v1")
+        if not anchor:
+            return frame_bgr
+
+        pts = np.array(anchor["corners_px"], dtype=np.int32).reshape((-1, 1, 2))
+        cx, cy = anchor["center_px"]
+        mid = (int(round(cx)), int(round(cy)))
+
+        # outline + center
+        try:
+            cv2.polylines(frame_bgr, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)  # yellow
+            cv2.circle(frame_bgr, mid, 4, (0, 255, 255), -1, cv2.LINE_AA)
+            cv2.putText(frame_bgr, f"ARUCO {anchor['id']}", (mid[0] + 8, mid[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        except Exception:
+            pass
+
+        return frame_bgr

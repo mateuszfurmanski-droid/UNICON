@@ -1,0 +1,15 @@
+[Unit]
+Description=UNICON TF-Luna Stable JSON (mm) -> /tmp/unicon_luna.json
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/bin/python3 /home/pi/UNICON/tools/tfluna_stable.py
+Restart=always
+RestartSec=0.5
+
+[Install]
+WantedBy=multi-user.target

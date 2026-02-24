@@ -1,0 +1,74 @@
+import time
+import cv2
+import numpy as np
+
+class ArucoOverlay:
+    def __init__(self, dict_name="DICT_4X4_50", ttl=0.25):
+        self.dict_name = dict_name
+        self.ttl = float(ttl)
+        self._t = 0.0
+        self._last = None
+        self._have_aruco = hasattr(cv2, "aruco")
+
+    def _get_detector(self):
+        d = getattr(cv2.aruco, self.dict_name, cv2.aruco.DICT_4X4_50)
+        dictionary = cv2.aruco.getPredefinedDictionary(d)
+        params = cv2.aruco.DetectorParameters()
+        if hasattr(cv2.aruco, "ArucoDetector"):
+            return cv2.aruco.ArucoDetector(dictionary, params)
+        return (dictionary, params)
+
+    def _detect(self, frame_bgr):
+        if not self._have_aruco or frame_bgr is None:
+            return None
+
+        det = self._get_detector()
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+
+        if isinstance(det, tuple):
+            dictionary, params = det
+            corners, ids, _rej = cv2.aruco.detectMarkers(gray, dictionary, parameters=params)
+        else:
+            corners, ids, _rej = det.detectMarkers(gray)
+
+        if ids is None or len(ids) == 0 or corners is None or len(corners) == 0:
+            return {"ok": True, "markers": 0, "ids": [], "anchor_v1": None}
+
+        ids_list = [int(x) for x in ids.flatten().tolist()]
+        c0 = corners[0].reshape(-1, 2).astype(np.float32)  # (4,2)
+        center = c0.mean(axis=0)
+
+        return {
+            "ok": True,
+            "markers": int(len(ids_list)),
+            "ids": ids_list,
+            "anchor_v1": {
+                "id": int(ids_list[0]),
+                "corners_px": [[float(x), float(y)] for x, y in c0.tolist()],
+                "center_px": [float(center[0]), float(center[1])],
+            },
+        }
+
+    def _maybe_update(self, frame_bgr):
+        now = time.time()
+        if (now - self._t) < self.ttl and self._last is not None:
+            return self._last
+        self._t = now
+        self._last = self._detect(frame_bgr)
+        return self._last
+
+    def draw_inplace(self, frame_bgr):
+        res = self._maybe_update(frame_bgr)
+        if not res or not res.get("ok") or not res.get("anchor_v1"):
+            return frame_bgr
+
+        a = res["anchor_v1"]
+        pts = np.array(a["corners_px"], dtype=np.int32).reshape((-1, 1, 2))
+        c = a["center_px"]
+        cx, cy = int(round(c[0])), int(round(c[1]))
+
+        cv2.polylines(frame_bgr, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.circle(frame_bgr, (cx, cy), 4, (0, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(frame_bgr, f"ARUCO:{a['id']}", (cx + 8, cy - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        return frame_bgr

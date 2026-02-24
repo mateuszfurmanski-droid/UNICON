@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+import glob
+import time
+
+# TF-Luna / TFmini UART default is usually 115200 8N1
+BAUDRATE = 115200
+TIMEOUT = 0.1
+
+# Frame format (9 bytes):
+# 0: 0x59
+# 1: 0x59
+# 2: Dist_L
+# 3: Dist_H
+# 4: Strength_L
+# 5: Strength_H
+# 6: Temp_L
+# 7: Temp_H
+# 8: Checksum = (sum of bytes 0..7) & 0xFF
+
+def find_lidar_port():
+    """
+    Prefer /dev/serial/by-id (stable).
+    Returns string path.
+    """
+    by_id = sorted(glob.glob("/dev/serial/by-id/*"))
+    if by_id:
+        return by_id[0]
+
+    # fallback
+    tty = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+    if tty:
+        return tty[0]
+
+    raise FileNotFoundError("No serial device found under /dev/serial/by-id, /dev/ttyUSB*, /dev/ttyACM*")
+
+
+def _read_exact(ser, n: int) -> bytes:
+    """Read exactly n bytes or raise TimeoutError."""
+    buf = bytearray()
+    t0 = time.time()
+    while len(buf) < n:
+        chunk = ser.read(n - len(buf))
+        if chunk:
+            buf.extend(chunk)
+            continue
+        if time.time() - t0 > TIMEOUT:
+            raise TimeoutError(f"Serial timeout while reading {n} bytes (got {len(buf)})")
+    return bytes(buf)
+
+
+def read_tfluna_frame(ser):
+    """
+    Robust sync + checksum.
+    Returns: (distance_mm:int, strength:int, temperature_c:float)
+    """
+    # IMPORTANT: do NOT trust buffer alignment. We hunt for header 0x59 0x59.
+    # Read byte-by-byte until we see header, then read remaining 7 bytes.
+    while True:
+        b = ser.read(1)
+        if not b:
+            raise TimeoutError("Serial timeout (no data)")
+        if b[0] != 0x59:
+            continue
+        b2 = ser.read(1)
+        if not b2:
+            raise TimeoutError("Serial timeout (waiting second header byte)")
+        if b2[0] != 0x59:
+            continue
+
+        payload = _read_exact(ser, 7)  # bytes 2..8
+        frame = bytes([0x59, 0x59]) + payload  # 9 bytes
+
+        checksum = sum(frame[0:8]) & 0xFF
+        if checksum != frame[8]:
+            # bad frame -> resync
+            continue
+
+        dist = frame[2] | (frame[3] << 8)
+        strength = frame[4] | (frame[5] << 8)
+        temp_raw = frame[6] | (frame[7] << 8)
+
+        # Common TF-Luna temp formula:
+        # temp_c = temp_raw / 8.0 - 256
+        temp_c = (temp_raw / 8.0) - 256.0
+
+        return int(dist), int(strength), float(temp_c)

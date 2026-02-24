@@ -1,0 +1,99 @@
+import threading
+from flask import Blueprint, jsonify, request
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
+
+ruler_bp = Blueprint("ruler_bp", __name__)
+
+_LOCK = threading.Lock()
+STATE = {
+    "A": None,   # {"x": float, "y": float} normalized 0..1
+    "B": None,
+    "last": None,
+    "reset": 0,
+}
+
+def _get_xy():
+    # Accept x,y as normalized floats (0..1)
+    x = request.args.get("x", None)
+    y = request.args.get("y", None)
+    if x is None or y is None:
+        return None
+    try:
+        xf = float(x)
+        yf = float(y)
+        # clamp
+        xf = 0.0 if xf < 0.0 else (1.0 if xf > 1.0 else xf)
+        yf = 0.0 if yf < 0.0 else (1.0 if yf > 1.0 else yf)
+        return {"x": xf, "y": yf}
+    except Exception:
+        return None
+
+@ruler_bp.get("/api/btn2/state")
+def btn2_state():
+    with _LOCK:
+        return jsonify({"ok": True, "state": STATE})
+
+@ruler_bp.get("/api/btn2/RESET")
+def btn2_reset():
+    with _LOCK:
+        STATE["A"] = None
+        STATE["B"] = None
+        STATE["last"] = "RESET"
+        STATE["reset"] = int(STATE.get("reset", 0)) + 1
+        return jsonify({"ok": True, "btn": "RESET", "state": STATE})
+
+@ruler_bp.get("/api/btn2/A")
+def btn2_a():
+    xy = _get_xy()
+    with _LOCK:
+        if xy is not None:
+            STATE["A"] = xy
+        STATE["last"] = "A"
+        return jsonify({"ok": True, "btn": "A", "state": STATE})
+
+@ruler_bp.get("/api/btn2/B")
+def btn2_b():
+    xy = _get_xy()
+    with _LOCK:
+        if xy is not None:
+            STATE["B"] = xy
+        STATE["last"] = "B"
+        return jsonify({"ok": True, "btn": "B", "state": STATE})
+
+def draw_ruler_overlay(frame):
+    # Draws A-B line + PX distance. Safe if cv2 missing.
+    if cv2 is None or frame is None:
+        return
+
+    with _LOCK:
+        A = STATE.get("A")
+        B = STATE.get("B")
+
+    if not (isinstance(A, dict) and isinstance(B, dict)):
+        return
+
+    try:
+        h, w = frame.shape[:2]
+        ax = int(max(0, min(w - 1, float(A.get("x", 0.0)) * w)))
+        ay = int(max(0, min(h - 1, float(A.get("y", 0.0)) * h)))
+        bx = int(max(0, min(w - 1, float(B.get("x", 0.0)) * w)))
+        by = int(max(0, min(h - 1, float(B.get("y", 0.0)) * h)))
+
+        cv2.line(frame, (ax, ay), (bx, by), (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.circle(frame, (ax, ay), 6, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.circle(frame, (bx, by), 6, (0, 255, 0), 2, cv2.LINE_AA)
+
+        dx = bx - ax
+        dy = by - ay
+        dist_px = (dx * dx + dy * dy) ** 0.5
+        mx = int((ax + bx) * 0.5)
+        my = int((ay + by) * 0.5)
+
+        txt = f"PX: {dist_px:.1f}"
+        cv2.putText(frame, txt, (mx + 8, my - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+    except Exception:
+        return

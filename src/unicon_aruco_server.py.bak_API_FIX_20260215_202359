@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+from flask import Flask, jsonify
+import cv2
+
+app = Flask(__name__)
+
+@app.route("/health")
+def health():
+    return "OK", 200
+
+@app.route("/api/aruco/test")
+def aruco_test():
+    aruco = cv2.aruco
+    d = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    img = aruco.generateImageMarker(d, 0, 200)
+    return jsonify({
+        "opencv": cv2.__version__,
+        "aruco": True,
+        "dict": "DICT_4X4_50",
+        "marker_size_px": img.shape[0]
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8096, debug=False)

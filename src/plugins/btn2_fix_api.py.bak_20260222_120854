@@ -1,0 +1,17 @@
+from flask import Blueprint, current_app, request, jsonify
+
+bp = Blueprint("plugin_btn2_fix_api_v3", __name__)
+
+@bp.get("/api/btn2fix/state")
+def state():
+    fn = current_app.config.get("BTN2_STATE_FN")
+    if not fn:
+        return jsonify(ok=False, error="BTN2_STATE_FN not bound"), 500
+    return fn()
+
+@bp.route("/api/btn2fix/<name>", methods=["GET","POST"])
+def set_btn(name):
+    fn = current_app.config.get("BTN2_SET_FN")
+    if not fn:
+        return jsonify(ok=False, error="BTN2_SET_FN not bound"), 500
+    return fn(name)

@@ -1,0 +1,72 @@
+/* UNICON_BOOT2LIVE_DEBUG_V1
+   Goal: prove hud_gold_v1.js is executed + prove /health updates hudline.
+*/
+(function(){
+  function $(id){ return document.getElementById(id); }
+  function setHud(txt){
+    const el = $("hudline");
+    if (el) el.textContent = txt;
+  }
+  function log(txt){
+    try{ console.log(txt); }catch(e){}
+    // also show something even if console is hidden
+    setHud(txt);
+  }
+
+  log("HUD: LOADED (debug v1)");
+
+  async function tick(){
+    try{
+      const r = await fetch("/health", {cache:"no-store"});
+      const j = await r.json();
+      const L = (j && j.latest) ? j.latest : {};
+      const dist = (L.dist_cm!=null) ? (Number(L.dist_cm).toFixed(1)+"cm") : "n/a";
+      const p = (L.pitch!=null) ? Number(L.pitch).toFixed(2) : "n/a";
+      const rr = (L.roll!=null) ? Number(L.roll).toFixed(2) : "n/a";
+      const fps = (L.fps!=null) ? Number(L.fps).toFixed(1) : "n/a";
+      log(`L:${dist}  P:${p}°  R:${rr}°  fps:${fps}`);
+    }catch(e){
+      log("HUD ERR: " + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  // fast first tick, then 5Hz
+  tick();
+  setInterval(tick, 200);
+})();
+(function () {
+  const hud = document.createElement('div');
+  hud.id = 'hud-gold-v1';
+  hud.style.cssText = `
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #eab308;
+    font-family: monospace;
+    font-size: 14px;
+    background: rgba(0,0,0,0.45);
+    padding: 6px 10px;
+    border: 1px solid #eab308;
+    border-radius: 6px;
+    z-index: 9999;
+  `;
+  hud.textContent = 'HUD INIT';
+  document.body.appendChild(hud);
+
+  async function tick() {
+    try {
+      const r = await fetch('/health');
+      const j = await r.json();
+      const L = j.latest || {};
+      hud.textContent =
+        `L:${(L.dist_cm||0).toFixed(1)}cm ` +
+        `P:${(L.pitch||0).toFixed(2)}° ` +
+        `R:${(L.roll||0).toFixed(2)}°`;
+    } catch (e) {
+      hud.textContent = 'HUD ERR';
+    }
+  }
+
+  setInterval(tick, 200);
+})();

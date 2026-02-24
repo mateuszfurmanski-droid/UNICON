@@ -1,0 +1,95 @@
+import time
+import threading
+import cv2
+import numpy as np
+
+class ArucoOverlay:
+    def __init__(self, dict_name: str = "DICT_4X4_50", throttle_hz: float = 4.0):
+        self.dict_name = dict_name
+        self.throttle_hz = float(throttle_hz) if throttle_hz else 0.0
+        self._have_aruco = hasattr(cv2, "aruco")
+        self._lock = threading.Lock()
+        self._last_t = 0.0
+        self._last = None
+
+        if self._have_aruco:
+            d = getattr(cv2.aruco, self.dict_name, cv2.aruco.DICT_4X4_50)
+            self._dict = cv2.aruco.getPredefinedDictionary(d)
+            self._params = cv2.aruco.DetectorParameters()
+            self._det = cv2.aruco.ArucoDetector(self._dict, self._params) if hasattr(cv2.aruco, "ArucoDetector") else None
+        else:
+            self._dict = None
+            self._params = None
+            self._det = None
+
+    def _detect(self, frame_bgr):
+        if (not self._have_aruco) or frame_bgr is None:
+            return None
+        try:
+            if self._det is not None:
+                corners, ids, _ = self._det.detectMarkers(frame_bgr)
+            else:
+                corners, ids, _ = cv2.aruco.detectMarkers(frame_bgr, self._dict, parameters=self._params)
+        except Exception:
+            return None
+
+        if ids is None or len(ids) == 0:
+            return {"ids": [], "corners": []}
+
+        norm = []
+        for c in corners:
+            arr = np.array(c, dtype=np.float32)
+            if arr.ndim == 3:
+                arr = arr.reshape(-1, 2)
+            if arr.shape[0] >= 4:
+                arr = arr[:4]
+            norm.append(arr)
+
+        return {"ids": [int(x) for x in ids.flatten().tolist()], "corners": norm}
+
+    def apply(self, frame_bgr):
+        if frame_bgr is None:
+            return frame_bgr
+
+        now = time.time()
+        do_detect = True
+        if self.throttle_hz > 0:
+            min_dt = 1.0 / self.throttle_hz
+            with self._lock:
+                do_detect = (now - self._last_t) >= min_dt
+
+        if do_detect:
+            res = self._detect(frame_bgr)
+            with self._lock:
+                self._last_t = now
+                self._last = res
+
+        with self._lock:
+            res = self._last
+
+        if not res or not isinstance(res, dict):
+            return frame_bgr
+
+        ids = res.get("ids") or []
+        corners = res.get("corners") or []
+        if not ids or not corners:
+            return frame_bgr
+
+        h, w = frame_bgr.shape[:2]
+        for mid, pts in zip(ids, corners):
+            try:
+                p = np.array(pts, dtype=np.int32).reshape(-1, 2)
+                if p.shape[0] < 4:
+                    continue
+                p[:, 0] = np.clip(p[:, 0], 0, w - 1)
+                p[:, 1] = np.clip(p[:, 1], 0, h - 1)
+                cv2.polylines(frame_bgr, [p.reshape(-1, 1, 2)], True, (0, 255, 255), 2)
+                cx = float(np.mean(p[:, 0]))
+                cy = float(np.mean(p[:, 1]))
+                cv2.circle(frame_bgr, (int(cx), int(cy)), 4, (0, 255, 255), -1)
+                cv2.putText(frame_bgr, f"ARUCO {mid}", (int(cx) + 8, int(cy) - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+            except Exception:
+                continue
+
+        return frame_bgr

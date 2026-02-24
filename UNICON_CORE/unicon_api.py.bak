@@ -1,0 +1,39 @@
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+
+class UniconHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "service": "UNICON_CORE"
+            }).encode())
+
+        elif self.path == "/imu":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "yaw": 0.0,
+                "pitch": 0.0,
+                "roll": 0.0,
+                "source": "SIMULATED"
+            }).encode())
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def run():
+    server = HTTPServer(("0.0.0.0", 8080), UniconHandler)
+    print("UNICON_CORE running on port 8080")
+    server.serve_forever()
+
+if __name__ == "__main__":
+    run()
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+

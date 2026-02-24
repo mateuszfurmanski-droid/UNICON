@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+import os
+import time
+import threading
+from typing import Optional, Tuple
+
+import cv2
+from flask import Flask, Response, jsonify, redirect, request
+
+APP_NAME = "cam_dual_hud_web"
+PORT = int(os.environ.get("UNICON_PORT", "8095"))
+
+# LOCKED BASELINE (UNICON V0):
+# RIGHT camera is VIEW/HUD stream (MJPEG for humans)
+# LEFT camera is MEASURE-only using RAW/YUYV for computation
+VIDEO_RIGHT = os.environ.get("UNICON_VIDEO_RIGHT", "/dev/video2")
+VIDEO_LEFT  = os.environ.get("UNICON_VIDEO_LEFT",  "/dev/video0")
+
+app = Flask(APP_NAME)
+
+_lock = threading.RLock()
+_cap_right: Optional[cv2.VideoCapture] = None
+_cap_left: Optional[cv2.VideoCapture] = None
+_last_err: str = ""
+_status = {
+    "ok": True,
+    "right_open": False,
+    "left_open": False,
+    "right_dev": VIDEO_RIGHT,
+    "left_dev": VIDEO_LEFT,
+    "port": PORT,
+    "last_err": "",
+}
+
+def _set_err(msg: str) -> None:
+    global _last_err
+    _last_err = msg
+    _status["last_err"] = msg
+
+def _open_cap(dev: str, for_view: bool) -> Tuple[Optional[cv2.VideoCapture], str]:
+    # CAP_V4L2 helps on Pi
+    cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        return None, f"VideoCapture open failed: {dev}"
+
+    # Minimal sane defaults (don’t fight driver too hard)
+    # Right (view): allow default; Left (measure): try YUYV if possible
+    try:
+        if not for_view:
+            # Try force YUYV (raw-ish); if unsupported driver will ignore
+            fourcc = cv2.VideoWriter_fourcc(*"YUYV")
+            cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+
+    return cap, ""
+
+def init_cameras() -> None:
+    global _cap_right, _cap_left
+    with _lock:
+        # RIGHT
+        if _cap_right is None or not _cap_right.isOpened():
+            cap, err = _open_cap(VIDEO_RIGHT, for_view=True)
+            _cap_right = cap
+            _status["right_open"] = bool(cap and cap.isOpened())
+            if err:
+                _set_err(err)
+
+        # LEFT
+        if _cap_left is None or not _cap_left.isOpened():
+            cap, err = _open_cap(VIDEO_LEFT, for_view=False)
+            _cap_left = cap
+            _status["left_open"] = bool(cap and cap.isOpened())
+            if err:
+                _set_err(err)
+
+def _ensure_right() -> cv2.VideoCapture:
+    global _cap_right
+    with _lock:
+        if _cap_right is None or not _cap_right.isOpened():
+            init_cameras()
+        if _cap_right is None or not _cap_right.isOpened():
+            raise RuntimeError(f"RIGHT camera not available: {VIDEO_RIGHT} :: {_last_err}")
+        return _cap_right
+
+def _ensure_left() -> cv2.VideoCapture:
+    global _cap_left
+    with _lock:
+        if _cap_left is None or not _cap_left.isOpened():
+            init_cameras()
+        if _cap_left is None or not _cap_left.isOpened():
+            raise RuntimeError(f"LEFT camera not available: {VIDEO_LEFT} :: {_last_err}")
+        return _cap_left
+
+def _jpeg_bytes(frame) -> Optional[bytes]:
+    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    if not ok:
+        return None
+    return buf.tobytes()
+
+def mjpeg_stream(cap_getter, label: str):
+    boundary = b"--frame\r\n"
+    while True:
+        try:
+            cap = cap_getter()
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                # Try reopen once, then continue
+                with _lock:
+                    if label == "right":
+                        try:
+                            if _cap_right is not None:
+                                _cap_right.release()
+                        except Exception:
+                            pass
+                        _cap_right = None
+                        _status["right_open"] = False
+                    else:
+                        try:
+                            if _cap_left is not None:
+                                _cap_left.release()
+                        except Exception:
+                            pass
+                        _cap_left = None
+                        _status["left_open"] = False
+                init_cameras()
+                time.sleep(0.05)
+                continue
+
+            jb = _jpeg_bytes(frame)
+            if jb is None:
+                time.sleep(0.01)
+                continue
+
+            yield boundary
+            yield b"Content-Type: image/jpeg\r\n"
+            yield f"X-UNICON-CAM: {label}\r\n".encode("utf-8")
+            yield f"Content-Length: {len(jb)}\r\n\r\n".encode("utf-8")
+            yield jb
+            yield b"\r\n"
+        except GeneratorExit:
+            return
+        except Exception as e:
+            _set_err(f"{label} stream error: {e}")
+            time.sleep(0.1)
+
+@app.route("/health")
+def health():
+    init_cameras()
+    return jsonify({
+        "ok": True,
+        "app": APP_NAME,
+        **_status,
+        "client": request.remote_addr,
+    })
+
+@app.route("/")
+def index():
+    # Simple HUD page (no clutter)
+    html = f"""<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UNICON Operate – Live Job</title>
+  <style>
+    body {{ margin:0; background:#000; color:#0f0; font-family: monospace; }}
+    .bar {{ padding:12px; display:flex; gap:12px; }}
+    .btn {{ flex:1; padding:18px 12px; font-size:22px; border-radius:18px; border:1px solid #0a0;
+            background:#061; color:#0f0; text-align:center; }}
+    .wrap {{ padding:10px 12px; }}
+    img {{ width:100%; height:auto; display:block; background:#000; }}
+    a {{ color:#0f0; }}
+    .small {{ opacity:0.9; line-height:1.3; }}
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="btn" onclick="fetch('/api/btn/A').catch(()=>0)">SET A</div>
+    <div class="btn" onclick="fetch('/api/btn/B').catch(()=>0)">SET B</div>
+    <div class="btn" onclick="fetch('/api/btn/RESET').catch(()=>0)">RESET</div>
+  </div>
+
+  <div class="wrap">
+    <img id="cam" src="/cam.mjpg" />
+    <div class="small">
+      RIGHT(view): {VIDEO_RIGHT} | LEFT(measure raw): {VIDEO_LEFT}<br/>
+      Port: {PORT} | <a href="/health">/health</a><br/>
+      Aliases: /cam , /cam.mjpg , /mjpeg/right  (left dbg: /mjpeg/left , /cam2.mjpg)
+    </div>
+  </div>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
+
+# --- Aliases / Compatibility ---
+@app.route("/cam")
+def cam_alias():
+    return redirect("/cam.mjpg", code=302)
+
+@app.route("/cam2")
+def cam2_alias():
+    return redirect("/cam2.mjpg", code=302)
+
+@app.route("/cam.mjpg")
+def cam_mjpg():
+    init_cameras()
+    return Response(mjpeg_stream(_ensure_right, "right"),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/cam2.mjpg")
+def cam2_mjpg():
+    init_cameras()
+    return Response(mjpeg_stream(_ensure_left, "left"),
+                    mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/mjpeg/right")
+def mjpeg_right():
+    return redirect("/cam.mjpg", code=302)
+
+@app.route("/mjpeg/left")
+def mjpeg_left():
+    return redirect("/cam2.mjpg", code=302)
+
+# Button endpoint (keeps your UI from erroring)
+@app.route("/api/btn/<name>")
+def api_btn(name):
+    return jsonify({"ok": True, "btn": name, "ts": time.time()})
+
+def main():
+    init_cameras()
+    # Flask dev server (OK for V0)
+    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
+
+if __name__ == "__main__":
+    main()

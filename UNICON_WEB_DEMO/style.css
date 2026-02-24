@@ -1,0 +1,30 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: black;
+  overflow: hidden;
+}
+
+video, canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+#ui {
+  position: fixed;
+  bottom: 20px;
+  width: 100%;
+  text-align: center;
+}
+
+#pinBtn {
+  font-family: monospace;
+  font-size: 14px;
+  padding: 10px 20px;
+  border: 1px solid #00ff66;
+  background: black;
+  color: #00ff66;
+}

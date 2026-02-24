@@ -1,0 +1,32 @@
+{
+  "pack_id": "carpentry",
+  "name": "Carpentry / Joinery",
+  "version": "v1",
+  "tools": [
+    {
+      "tool_id": "DISTANCE_MEASURE",
+      "name": "Distance Measure",
+      "hud": ["RETICLE", "LOCK", "DIST_MM"]
+    },
+    {
+      "tool_id": "LEVEL_MEASURE",
+      "name": "Level",
+      "hud": ["RETICLE", "LOCK", "LEVEL_PITCH_ROLL"]
+    },
+    {
+      "tool_id": "PLUMB",
+      "name": "Plumb",
+      "hud": ["RETICLE", "LOCK", "PLUMB_LINE"]
+    },
+    {
+      "tool_id": "CUT_GUIDE",
+      "name": "Cut Guide",
+      "hud": ["RETICLE", "CUT_LINE", "ANGLE"]
+    },
+    {
+      "tool_id": "TASKS",
+      "name": "Tasks",
+      "hud": ["TASK_TITLE", "TASK_STATUS"]
+    }
+  ]
+}

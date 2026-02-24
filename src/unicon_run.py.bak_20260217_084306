@@ -1,0 +1,26 @@
+import importlib.util
+import os
+import sys
+
+TARGET = os.environ.get("UNICON_TARGET", "/home/pi/UNICON/src/cam_dual_hud_web.py")
+MODNAME = "unicon_target_app"
+
+def _load(path: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load spec for {path}")
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[name] = m
+    spec.loader.exec_module(m)
+    return m
+
+m = _load(TARGET, MODNAME)
+
+app = getattr(m, "app", None)
+if app is None and hasattr(m, "create_app"):
+    app = m.create_app()
+if app is None:
+    raise RuntimeError("Target module did not expose `app` or `create_app()`")
+
+# Single bind, no reloader, no debug.
+app.run(host="0.0.0.0", port=8095, debug=False, use_reloader=False, threaded=True)

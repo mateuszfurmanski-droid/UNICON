@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+# UNICON Operate V1: Camera (MJPEG) + IMU (ICM20948 accel tilt) + LiDAR (TF-Luna) + Web UI
+import time
+import threading
+import math
+import traceback
+
+import cv2
+import serial
+import smbus
+from flask import Flask, Response, jsonify
+
+# ======================
+# CONFIG
+# ======================
+HOST = "0.0.0.0"
+PORT = 8090
+
+VIDEO_DEV = "/dev/video0"
+
+# TF-Luna default on Pi UART:
+# NOTE: you currently have /dev/serial0 -> ttyS0
+LIDAR_PORT = "/dev/serial0"
+LIDAR_BAUD = 115200
+
+# IMU I2C (ICM20948 often at 0x68)
+IMU_ENABLED = True
+IMU_I2C_BUS = 1
+IMU_ADDR = 0x68
+
+# Camera defaults (MJPG helps with "green screen" on many UVC cams)
+CAM_WIDTH = 640
+CAM_HEIGHT = 480
+CAM_FPS = 15
+FORCE_MJPG = True
+
+# UI overlay style
+OVERLAY_COLOR = (0, 255, 0)
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+# ======================
+# STATE
+# ======================
+app = Flask(__name__)
+
+status = {
+    "boot_ts": time.time(),
+    "errors": [],
+    "video_ok": False,
+    "imu_ok": False,
+    "lidar_ok": False,
+}
+
+latest = {
+    "ts": None,
+    "dist_cm": None,
+    "strength": None,
+    "temp_c": None,
+    "roll": None,   # deg (tilt left/right)
+    "pitch": None,  # deg (tilt forward/back)
+    "fps": None,
+}
+
+
+def set_error(tag, e):
+    msg = f"{tag}: {repr(e)}"
+    # keep last ~30 errors
+    status["errors"].append(msg)
+    status["errors"] = status["errors"][-30:]
+
+
+# ======================
+# LiDAR (TF-Luna) parsing
+# ======================
+def read_exact(ser, n):
+    buf = bytearray()
+    while len(buf) < n:
+        b = ser.read(n - len(buf))
+        if not b:
+            return None
+        buf.extend(b)
+    return bytes(buf)
+
+
+def lidar_loop():
+    while True:
+        try:
+            ser = serial.Serial(LIDAR_PORT, LIDAR_BAUD, timeout=0.2)
+            time.sleep(0.2)
+            status["lidar_ok"] = True
+
+            while True:
+                b1 = ser.read(1)
+                if not b1 or b1[0] != 0x59:
+                    continue
+                b2 = ser.read(1)
+                if not b2 or b2[0] != 0x59:
+                    continue
+
+                payload = read_exact(ser, 7)
+                if not payload:
+                    continue
+
+                frame = b"\x59\x59" + payload
+                if (sum(frame[:8]) & 0xFF) != frame[8]:
+                    continue
+
+                dist = frame[2] | (frame[3] << 8)        # TF-Luna typically reports distance in cm
+                strength = frame[4] | (frame[5] << 8)
+                temp = (frame[6] | (frame[7] << 8)) / 8.0 - 256.0
+
+                latest["ts"] = time.time()
+                latest["dist_cm"] = float(dist)
+                latest["strength"] = int(strength)
+                latest["temp_c"] = round(temp, 1)
+                status["lidar_ok"] = True
+
+        except Exception as e:
+            status["lidar_ok"] = False
+            set_error("lidar_loop", e)
+            try:
+                ser.close()
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+
+# ======================
+# IMU (ICM-20948 accel only -> roll/pitch)
+# ======================
+REG_BANK_SEL = 0x7F
+PWR_MGMT_1 = 0x06
+PWR_MGMT_2 = 0x07
+ACCEL_XOUT_H = 0x2D
+
+
+def i16(h, l):
+    v = (h << 8) | l
+    return v - 65536 if (v & 0x8000) else v
+
+
+def imu_select_bank(bus, b):
+    bus.write_byte_data(IMU_ADDR, REG_BANK_SEL, (b & 3) << 4)
+    time.sleep(0.002)
+
+
+def imu_read6(bus, reg):
+    d = bus.read_i2c_block_data(IMU_ADDR, reg, 6)
+    ax = i16(d[0], d[1])
+    ay = i16(d[2], d[3])
+    az = i16(d[4], d[5])
+    return ax, ay, az
+
+
+def imu_loop():
+    if not IMU_ENABLED:
+        return
+
+    try:
+        bus = smbus.SMBus(IMU_I2C_BUS)
+        imu_select_bank(bus, 0)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_1, 0x01)
+        time.sleep(0.05)
+        bus.write_byte_data(IMU_ADDR, PWR_MGMT_2, 0x00)
+        time.sleep(0.05)
+        status["imu_ok"] = True
+    except Exception as e:
+        status["imu_ok"] = False
+        set_error("imu_init", e)
+        return
+
+    while True:
+        try:
+            imu_select_bank(bus, 0)
+            ax, ay, az = imu_read6(bus, ACCEL_XOUT_H)
+
+            # accel-only tilt:
+            # roll around X axis (left/right), pitch around Y axis (forward/back)
+            roll = math.degrees(math.atan2(ay, az))
+            pitch = math.degrees(math.atan2(-ax, math.sqrt(ay * ay + az * az)))
+
+            latest["roll"] = round(roll, 2)
+            latest["pitch"] = round(pitch, 2)
+            status["imu_ok"] = True
+
+            time.sleep(0.05)
+
+        except Exception as e:
+            status["imu_ok"] = False
+            set_error("imu_loop", e)
+            time.sleep(0.25)
+
+
+# ======================
+# CAMERA STREAM (MJPEG)
+# ======================
+def camera_open():
+    cap = cv2.VideoCapture(VIDEO_DEV, cv2.CAP_V4L2)
+    if FORCE_MJPG:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, CAM_FPS)
+    time.sleep(0.2)
+    return cap
+
+
+def mjpeg_frames():
+    cap = camera_open()
+
+    # FPS estimation
+    t0 = time.time()
+    frames = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            status["video_ok"] = False
+            # try reopen
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.2)
+            cap = camera_open()
+            continue
+
+        status["video_ok"] = True
+
+        frames += 1
+        t1 = time.time()
+        if t1 - t0 >= 1.0:
+            latest["fps"] = round(frames / (t1 - t0), 1)
+            t0 = t1
+            frames = 0
+
+        # overlay: crosshair + "level line" from roll + text line
+        h, w = frame.shape[:2]
+        cx, cy = w // 2, h // 2
+
+        cv2.drawMarker(frame, (cx, cy), OVERLAY_COLOR, cv2.MARKER_CROSS, 28, 2)
+
+        # roll line
+        if latest["roll"] is not None:
+            ang = math.radians(latest["roll"])
+            L = int(min(w, h) * 0.35)
+            x1 = int(cx - L * math.cos(ang))
+            y1 = int(cy - L * math.sin(ang))
+            x2 = int(cx + L * math.cos(ang))
+            y2 = int(cy + L * math.sin(ang))
+            cv2.line(frame, (x1, y1), (x2, y2), OVERLAY_COLOR, 2)
+
+        # bottom HUD text (single line)
+        dist = latest["dist_cm"]
+        strength = latest["strength"]
+        temp = latest["temp_c"]
+        roll = latest["roll"]
+        pitch = latest["pitch"]
+        fps = latest["fps"]
+
+        txt = (
+            f"LiDAR:{dist if dist is not None else '---'}cm "
+            f"S:{strength if strength is not None else '---'} "
+            f"T:{temp if temp is not None else '---'}C | "
+            f"R:{roll if roll is not None else '---'} "
+            f"P:{pitch if pitch is not None else '---'} | "
+            f"FPS:{fps if fps is not None else '---'}"
+        )
+        cv2.putText(frame, txt, (10, h - 12), FONT, 0.6, OVERLAY_COLOR, 2, cv2.LINE_AA)
+
+        ret, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ret:
+            continue
+
+        yield (b"--frame\r\n"
+               b"Content-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n")
+
+
+# ======================
+# WEB ROUTES
+# ======================
+@app.get("/health")
+def health():
+    return jsonify({"ok": True, "status": status, "latest": latest})
+
+
+@app.get("/cam.mjpg")
+def cam_mjpg():
+    return Response(mjpeg_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+# Simple "Operate" UI (V1): transparent green HUD + buttons + camera background
+MAIN_HTML = r"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UNICON Operate V1</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; font-family: Arial, sans-serif; }
+    #wrap { position:relative; width:100vw; height:100vh; }
+    #cam { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; transform-origin:center center; }
+    #hud {
+      position:absolute; inset:0;
+      pointer-events:none;
+      background: rgba(0, 255, 0, 0.10); /* tint 10% green */
+    }
+    #bar {
+      position:absolute; left:0; right:0; bottom:0;
+      padding:8px 10px;
+      color:#7CFF7C;
+      background: rgba(0,0,0,0.35);
+      font-size:14px;
+      display:flex;
+      gap:14px;
+      align-items:center;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      pointer-events:auto;
+    }
+    #btns { display:flex; gap:8px; }
+    button {
+      background: rgba(0,0,0,0.55);
+      color:#7CFF7C;
+      border:1px solid rgba(124,255,124,0.55);
+      padding:6px 10px;
+      border-radius:10px;
+      cursor:pointer;
+    }
+    button:hover { background: rgba(0,0,0,0.75); }
+    #info { opacity:0.95; }
+    #hint { opacity:0.7; font-size:12px; margin-left:auto; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <img id="cam" src="/cam.mjpg" />
+    <div id="hud"></div>
+
+    <div id="bar">
+      <div id="btns">
+        <button id="zIn">Zoom +</button>
+        <button id="zOut">Zoom -</button>
+        <button id="reset">Reset</button>
+      </div>
+      <div id="info">loading...</div>
+      <div id="hint">Wheel: zoom | Drag: pan (LMB)</div>
+    </div>
+  </div>
+
+<script>
+let scale = 1.0;
+let panX = 0, panY = 0;
+let dragging = false;
+let lastX = 0, lastY = 0;
+
+const cam = document.getElementById('cam');
+const info = document.getElementById('info');
+
+function applyTransform(){
+  cam.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+}
+
+function clampScale(s){
+  if (s < 1.0) s = 1.0;
+  if (s > 6.0) s = 6.0;
+  return s;
+}
+
+document.getElementById('zIn').onclick = () => { scale = clampScale(scale * 1.15); applyTransform(); };
+document.getElementById('zOut').onclick = () => { scale = clampScale(scale / 1.15); applyTransform(); };
+document.getElementById('reset').onclick = () => { scale = 1.0; panX = 0; panY = 0; applyTransform(); };
+
+window.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = (e.deltaY < 0) ? 1.12 : (1/1.12);
+  scale = clampScale(scale * factor);
+  applyTransform();
+}, { passive:false });
+
+cam.addEventListener('mousedown', (e) => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', (e) => {
+  if(!dragging) return;
+  panX += (e.clientX - lastX);
+  panY += (e.clientY - lastY);
+  lastX = e.clientX;
+  lastY = e.clientY;
+  applyTransform();
+});
+
+async function poll(){
+  try{
+    const r = await fetch('/health', { cache: 'no-store' });
+    const j = await r.json();
+    const L = j.latest || {};
+    const S = j.status || {};
+    info.textContent =
+      `LiDAR:${L.dist_cm ?? '---'}cm  S:${L.strength ?? '---'}  T:${L.temp_c ?? '---'}C | ` +
+      `R:${L.roll ?? '---'}  P:${L.pitch ?? '---'} | FPS:${L.fps ?? '---'} | ` +
+      `OK(v:${S.video_ok} i:${S.imu_ok} l:${S.lidar_ok})`;
+  }catch(e){
+    info.textContent = 'health: error';
+  }
+}
+setInterval(poll, 250);
+poll();
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/")
+def index():
+    return MAIN_HTML
+
+
+@app.get("/operate")
+def operate():
+    return MAIN_HTML
+
+
+# ======================
+# MAIN
+# ======================
+def main():
+    threading.Thread(target=lidar_loop, daemon=True).start()
+    threading.Thread(target=imu_loop, daemon=True).start()
+    app.run(host=HOST, port=PORT, threaded=True)
+
+
+if __name__ == "__main__":
+    # Even if systemd runs this, keeping this makes manual runs easy.
+    try:
+        main()
+    except Exception as e:
+        set_error("main", e)
+        traceback.print_exc()
+@app.route("/operate")
+def operate():
+    return """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>UNICON – LIVE JOB</title>
+<style>
+html,body{
+  margin:0; padding:0; background:#000; overflow:hidden;
+  font-family: monospace;
+}
+#video{
+  position:fixed; inset:0;
+}
+#video img{
+  width:100vw; height:100vh; object-fit:cover;
+}
+#hud{
+  position:fixed; inset:0;
+  pointer-events:none;
+}
+#hud svg{
+  width:100%; height:100%;
+}
+#info{
+  position:fixed;
+  bottom:6px; left:0; right:0;
+  text-align:center;
+  color:#7CFF7C;
+  font-size:12px;
+  background:rgba(0,40,0,0.25);
+  padding:4px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="video">
+  <img src="/cam.mjpg">
+</div>
+
+<div id="hud">
+<svg id="overlay">
+  <line x1="50%" y1="0" x2="50%" y2="100%" stroke="#00ff00" stroke-width="1"/>
+  <line x1="0" y1="50%" x2="100%" y2="50%" stroke="#00ff00" stroke-width="1"/>
+
+  <line id="measure" x1="0" y1="0" x2="0" y2="0"
+        stroke="#00ff00" stroke-width="2" visibility="hidden"/>
+</svg>
+</div>
+
+<div id="info">
+  LIVE JOB | scroll = zoom | click+drag = measure
+</div>
+
+<script>
+let svg = document.getElementById("overlay");
+let line = document.getElementById("measure");
+
+let start=null;
+let scale=1;
+
+document.addEventListener("wheel",e=>{
+  scale += e.deltaY * -0.001;
+  scale = Math.min(3,Math.max(0.5,scale));
+  document.getElementById("video").style.transform =
+    `scale(${scale})`;
+});
+
+svg.addEventListener("mousedown",e=>{
+  start = {x:e.clientX,y:e.clientY};
+  line.setAttribute("x1",start.x);
+  line.setAttribute("y1",start.y);
+  line.setAttribute("x2",start.x);
+  line.setAttribute("y2",start.y);
+  line.setAttribute("visibility","visible");
+});
+
+svg.addEventListener("mousemove",e=>{
+  if(!start) return;
+  line.setAttribute("x2",e.clientX);
+  line.setAttribute("y2",e.clientY);
+});
+
+svg.addEventListener("mouseup",e=>{
+  start=null;
+});
+</script>
+
+</body>
+</html>
+"""

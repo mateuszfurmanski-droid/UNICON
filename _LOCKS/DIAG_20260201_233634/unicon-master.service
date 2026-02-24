@@ -1,0 +1,16 @@
+[Unit]
+Description=UNICON Master (cam+luna+imu+etc)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/UNICON
+ExecStart=/usr/bin/python3 /home/pi/UNICON/src/cam_luna_web.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

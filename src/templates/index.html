@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UNICON Operate – Live Job</title>
+  <link rel="stylesheet" href="/static/style.css" />
+<style>
+
+/* BTN2 FIX */
+#topbar, .topbar, .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+}
+#cam, img#cam, .cam, .cam-img {
+  touch-action: none;
+}
+
+
+
+/* UNICON HARD TOPBAR (always clickable) */
+#uniconTopbar {
+  position: fixed !important;
+  top: 0 !important; left: 0 !important; right: 0 !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  gap: 16px !important;
+  padding: 14px 14px !important;
+  background: rgba(0,0,0,0.65) !important;
+  backdrop-filter: blur(2px) !important;
+}
+#uniconTopbar button{
+  flex: 1 1 auto !important;
+  height: 70px !important;
+  border-radius: 22px !important;
+  border: 0 !important;
+  font-size: 34px !important;
+  letter-spacing: 2px !important;
+  background: #0a3 !important;
+  color: #0f0 !important;
+}
+#uniconTopbar button:active { transform: scale(0.98) !important; }
+
+/* make sure stream never steals taps */
+video, canvas, img, #cam, #camimg, #stream, .stream, .mjpg {
+  pointer-events: none !important;
+}
+#uniconTopbar, #uniconTopbar * { pointer-events: auto !important; }
+
+/* push content below bar */
+body { margin-top: 110px !important; }
+
+
+/* UNICON CLICK FIX (topbar must be above video/canvas) */
+#topbar{
+  position:fixed !important;
+  top:0 !important; left:0 !important; right:0 !important;
+  z-index:2147483647 !important;
+  pointer-events:auto !important;
+  display:flex; gap:18px;
+  justify-content:space-around; align-items:center;
+  padding:18px 14px;
+  background:rgba(0,0,0,0.70);
+}
+#topbar *{ pointer-events:auto !important; touch-action:manipulation !important; }
+#topbar .btn{
+  flex:1; max-width:33%;
+  height:70px; border-radius:40px;
+  border:2px solid rgba(0,255,0,0.35);
+  background:rgba(0,128,0,0.55);
+  color:#00ff00;
+  font-size:34px; letter-spacing:3px;
+}
+#topbar .btn:active{ transform:scale(0.99); }
+
+body{ padding-top:110px !important; }
+
+/* Make sure stream layer NEVER steals taps */
+video, canvas, img, #stream, #mjpeg, .stream, .video, .camera {
+  pointer-events:none !important;
+  touch-action:none !important;
+}
+
+/* UNICON FIX: TOPBAR ABOVE STREAM */
+#topbar{position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;gap:18px;justify-content:space-around;align-items:center;padding:18px 14px;background:rgba(0,0,0,0.65);pointer-events:auto}
+#topbar .btn{flex:1;max-width:33%;height:70px;border-radius:40px;border:2px solid rgba(0,255,0,0.35);background:rgba(0,128,0,0.55);color:#00ff00;font-size:34px;letter-spacing:3px}
+#topbar .btn:active{transform:scale(0.99)}
+body{padding-top:110px}
+
+</style>
+<style>
+
+/* UNICON BTN2 CLICK FIX */
+#topbar, .topbar, #btnbar, .btnbar {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 9999 !important;
+  pointer-events: auto !important;
+}
+#topbar * , .topbar * , #btnbar * , .btnbar * {
+  pointer-events: auto !important;
+}
+video, canvas, #video, #canvas, .video, .canvas {
+  z-index: 1 !important;
+}
+
+</style>
+</head>
+<div id="topbar">
+  <button onclick="btn2A();" class="btn" id="btnA" type="button">SET A</button>
+  <button onclick="btn2B();" class="btn" id="btnB" type="button">SET B</button>
+  <button onclick="btn2R();" class="btn" id="btnR" type="button">RESET</button>
+</div>
+<script>
+(function(){
+  async function postBtn(name){
+    try{
+      const r = await fetch('/api/btn2/' + name, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({src:'ui'})});
+      // optional: log response
+      // console.log(await r.text());
+    }catch(e){}
+  }
+  function bind(id, name){
+    const el = document.getElementById(id);
+    if(!el) return;
+    const h = (ev)=>{ ev.preventDefault(); ev.stopPropagation(); postBtn(name); };
+    el.addEventListener('click', h, {passive:false});
+    el.addEventListener('touchstart', h, {passive:false});
+  }
+  bind('btnA','A');
+  bind('btnB','B');
+  bind('btnR','RESET');
+})();
+</script>
+  <a href="/api/btn2/B?x=0.75&y=0.75" style="flex:1;text-align:center;padding:10px;border-radius:14px;background:#111;color:#0f0;font-family:monospace;text-decoration:none;">B (bot-right)</a>
+</div>
+
+
+
+<div style="position:sticky;top:0;z-index:9999;padding:10px;display:flex;gap:12px;background:#000;">
+  <a href="/api/btn2/A?x=0.5&y=0.5" style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">SET A</a>
+  <a href="/api/btn2/B?x=0.5&y=0.5" style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">SET B</a>
+  <a href="/api/btn2/RESET"        style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">RESET</a>
+</div>
+<div style="padding:8px;background:#000;display:flex;gap:12px;">
+  <a href="/api/btn2/A?x=0.25&y=0.25" style="flex:1;text-align:center;padding:10px;border-radius:14px;background:#111;color:#0f0;font-family:monospace;text-decoration:none;">A (top-left)</a>
+  <a href="/api/btn2/B?x=0.75&y=0.75" style="flex:1;text-align:center;padding:10px;border-radius:14px;background:#111;color:#0f0;font-family:monospace;text-decoration:none;">B (bot-right)</a>
+</div>
+
+
+
+<div style="position:sticky;top:0;z-index:9999;padding:10px;display:flex;gap:12px;background:#000;">
+  <a href="/api/btn2/A?x=0.5&y=0.5" style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">SET A</a>
+  <a href="/api/btn2/B?x=0.5&y=0.5" style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">SET B</a>
+  <a href="/api/btn2/RESET"        style="flex:1;text-align:center;padding:18px 10px;border-radius:28px;background:#0b5; color:#0f0; font-size:34px; font-family:monospace; text-decoration:none;">RESET</a>
+</div>
+<div style="padding:8px;background:#000;display:flex;gap:12px;">
+  <a href="/api/btn2/A?x=0.25&y=0.25" style="flex:1;text-align:center;padding:10px;border-radius:14px;background:#111;color:#0f0;font-family:monospace;text-decoration:none;">A (top-left)</a>
+  <a href="/api/btn2/B?x=0.75&y=0.75" style="flex:1;text-align:center;padding:10px;border-radius:14px;background:#111;color:#0f0;font-family:monospace;text-decoration:none;">B (bot-right)</a>
+</div>
+
+
+  <div id="stage">
+    <!-- Camera background -->
+    <img id="cam" src="/cam.mjpg" alt="cam" / id="camStream">
+
+    <!-- Green tint layer (25%) -->
+    <div id="tint"></div>
+
+    <!-- Overlay canvas for crosshair, ruler, etc. -->
+    <canvas id="overlay"></canvas>
+
+    <!-- Bottom HUD -->
+    <div id="hud">
+      <div id="hudline">boot...</div>
+    </div>
+
+    <!-- Tiny help (toggle later) -->
+    <div id="help">
+      LMB: point A → point B (ruler) | RMB: clear | Wheel: zoom | Drag: pan
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20260202_114019"></script>
+
+  <!-- UNICON MENU OVERLAY (V1) -->
+  <button id="uniconMenuBtn" type="button" aria-label="menu">MENU</button>
+
+  <div id="uniconMenuShade" class="unicon-menu-shade" hidden></div>
+
+  <div id="uniconMenuPanel" class="unicon-menu-panel" hidden>
+    <div class="unicon-menu-header">
+      <div class="unicon-menu-title">UNICON Menu</div>
+      <button id="uniconMenuClose" type="button" class="unicon-menu-x" aria-label="close">×</button>
+    </div>
+
+    <div class="unicon-menu-buttons">
+      <button class="u-btn" data-action="test_port">TEST 8090</button>
+      <button class="u-btn" data-action="health">GET /health</button>
+      <button class="u-btn" data-action="live_job">GET /api/live_job</button>
+      <button class="u-btn" data-action="debug_imu">Open /debug_imu</button>
+      <button class="u-btn" data-action="cam_mjpg">Open /cam.mjpg</button>
+      <button class="u-btn" data-action="open_root">Open / (HUD)</button>
+      <button class="u-btn" data-action="toggle_overlay">HUD overlay toggle</button>
+    </div>
+
+    <pre id="uniconMenuOut" class="unicon-menu-out">ready.</pre>
+  </div>
+  <!-- HUD script disabled (menu overlay only) -->
+  <script src="/static/hud_active.js?v=20260202_114019"></script>
+
+
+<script>
+/* === UNICON_BTN_WIRE_V1 === */
+(function(){
+  const $ = (id)=>document.getElementById(id);
+
+  function toast(msg){
+    let el = document.getElementById("uniconToast");
+    if(!el){
+      el = document.createElement("div");
+      el.id = "uniconToast";
+      el.style.position = "fixed";
+      el.style.left = "12px";
+      el.style.bottom = "12px";
+      el.style.zIndex = "9999";
+      el.style.padding = "10px 12px";
+      el.style.borderRadius = "12px";
+      el.style.background = "rgba(0,0,0,0.72)";
+      el.style.border = "1px solid rgba(0,255,0,0.35)";
+      el.style.color = "#66ff66";
+      el.style.fontFamily = "monospace";
+      el.style.fontSize = "14px";
+      el.style.pointerEvents = "none";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.opacity = "1";
+    clearTimeout(window.__uniconToastTO);
+    window.__uniconToastTO = setTimeout(()=>{ el.style.opacity="0"; }, 900);
+  }
+
+  async function post(url){
+    const r = await fetch(url, {method:"POST", headers: {"Content-Type":"application/json"}, body:"{}"});
+    const j = await r.json().catch(()=>({ok:false, error:"bad_json"}));
+    return {status:r.status, json:j};
+  }
+
+  async function refreshState(){
+    try{
+      const r = await fetch("/api/btn2/state", {cache:"no-store"});
+      const j = await r.json();
+      if(j && j.ok){
+        const s = j.state || {};
+        // Optional: reflect in the A/B labels if present
+        const a = document.querySelector(".hud-a") || document.querySelector("#hudA") || null;
+        const b = document.querySelector(".hud-b") || document.querySelector("#hudB") || null;
+        if(a) a.textContent = "A: " + (s.a ? "SET" : "---");
+        if(b) b.textContent = "B: " + (s.b ? "SET" : "---");
+      }
+    }catch(e){}
+  }
+
+  function bind(btn, fn){
+    if(!btn) return;
+    const handler = async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      const out = await fn();
+      if(out.json && out.json.ok) toast("OK: " + out.json.action);
+      else toast("ERR (" + out.status + ")");
+      refreshState();
+    };
+    // click + touch/pointer (Android)
+    btn.addEventListener("click", handler, {passive:false});
+    btn.addEventListener("pointerdown", handler, {passive:false});
+    btn.addEventListener("touchstart", handler, {passive:false});
+  }
+
+  bind($("btnSetA"), ()=>post("/api/btn2/set_a"));
+  bind($("btnSetB"), ()=>post("/api/btn2/set_b"));
+  bind($("btnReset"), ()=>post("/api/btn2/reset"));
+
+  // initial state
+  refreshState();
+})();
+</script>
+
+
+<!-- UNICON_INLINE_BTN_FIX_V1 -->
+<script>
+(function(){
+  function post(url){
+    fetch(url, {method:'POST'})
+      .then(r=>r.json())
+      .then(j=>console.log('BTN OK', j))
+      .catch(e=>console.error('BTN ERR', e));
+  }
+
+  window.addEventListener('load', ()=>{
+    const a = document.querySelector('#btnSetA, button:contains("SET A")');
+    const b = document.querySelector('#btnSetB, button:contains("SET B")');
+    const r = document.querySelector('#btnReset, button:contains("RESET")');
+
+    document.querySelectorAll('button').forEach(btn=>{
+      const t = btn.textContent.trim().toUpperCase();
+      if(t === 'SET A') btn.onclick = ()=>post('/api/btn2/set_a');
+      if(t === 'SET B') btn.onclick = ()=>post('/api/btn2/set_b');
+      if(t === 'RESET') btn.onclick = ()=>post('/api/btn2/reset');
+    });
+  });
+})();
+</script>
+
+<script>
+(function(){
+  function postJSON(url, obj){
+    return fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(obj || {})
+    });
+  }
+
+  window.addEventListener('load', function(){
+    const img = document.getElementById('stream') || document.querySelector('img');
+    if(!img) return;
+    img.style.touchAction = 'manipulation';
+
+    function sendTap(ev){
+      const r = img.getBoundingClientRect();
+      const x = (ev.clientX - r.left);
+      const y = (ev.clientY - r.top);
+      postJSON('/api/tap', {x:x, y:y}).catch(()=>{});
+    }
+
+    img.addEventListener('pointerdown', function(ev){
+      try { sendTap(ev); } catch(e){}
+    }, {passive:true});
+  });
+})();
+</script>
+
+
+<!-- UNICON_TAP_ANYWHERE_V1 -->
+<script>
+(() => {
+  const postJSON = async (url, obj) => {
+    const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(obj)});
+    return r.json();
+  };
+
+  // Find the camera image (fallback: first img)
+  const img = document.getElementById("cam") || document.querySelector("img");
+  if(!img){ console.warn("No <img> found for tap."); return; }
+
+  // Overlay canvas for markers/line
+  const wrap = img.parentElement;
+  wrap.style.position = wrap.style.position || "relative";
+
+  const cvs = document.createElement("canvas");
+  cvs.style.position = "absolute";
+  cvs.style.left = "0";
+  cvs.style.top = "0";
+  cvs.style.pointerEvents = "none";
+  cvs.style.width = "100%";
+  cvs.style.height = "100%";
+  wrap.appendChild(cvs);
+  const ctx = cvs.getContext("2d");
+
+  const resize = () => {
+    const r = img.getBoundingClientRect();
+    cvs.width = Math.max(1, Math.floor(r.width));
+    cvs.height = Math.max(1, Math.floor(r.height));
+  };
+  window.addEventListener("resize", resize);
+  setTimeout(resize, 250);
+
+  const draw = (st) => {
+    resize();
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+    const a = st?.state?.a;
+    const b = st?.state?.b;
+    const last = st?.state?.last;
+
+    const dot = (p, label) => {
+      if(!p) return;
+      const x = p.x, y = p.y;
+      ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI*2); ctx.stroke();
+      ctx.fillText(label, x+10, y-10);
+    };
+
+    ctx.lineWidth = 2;
+    ctx.font = "16px monospace";
+
+    if(a && b){
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    dot(a, "A");
+    dot(b, "B");
+  };
+
+  // Tap anywhere on the image (ignore taps on buttons)
+  img.addEventListener("pointerdown", async (ev) => {
+    const t = ev.target;
+    if(t && (t.tagName === "BUTTON" || (t.closest && t.closest("button")))) return;
+
+    const r = img.getBoundingClientRect();
+    const nx = (ev.clientX - r.left) / r.width;
+    const ny = (ev.clientY - r.top) / r.height;
+
+    // Convert normalized to current canvas pixels (same as img display)
+    const x = nx * r.width;
+    const y = ny * r.height;
+
+    try{
+      const st = await postJSON("/api/tap", {nx, ny, w: r.width, h: r.height});
+      draw(st);
+    }catch(e){
+      console.error(e);
+    }
+  });
+
+  // Poll state to keep overlay in sync with SET A/B/RESET
+  setInterval(async () => {
+    try{
+      const r = await fetch("/api/btn2/state", {cache:"no-store"});
+      const st = await r.json();
+      draw(st);
+    }catch(e){}
+  }, 400);
+
+})();
+</script>
+
+
+<script>
+(function(){
+  const img = document.getElementById("cam");
+  if(!img) return;
+
+  function sendPick(ev){
+    const r = img.getBoundingClientRect();
+    const cx = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+    const cy = (ev.touches && ev.touches[0]) ? ev.touches[0].clientY : ev.clientY;
+    const u = (cx - r.left) / r.width;
+    const v = (cy - r.top) / r.height;
+
+    fetch("/api/pick", {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({u:u, v:v})
+    }).catch(()=>{});
+  }
+
+  img.style.touchAction = "manipulation";
+  img.addEventListener("click", sendPick, {passive:true});
+  img.addEventListener("touchstart", sendPick, {passive:true});
+})();
+</script>
+
+
+<!-- UNICON_BTN_BIND_V1 -->
+<script>
+(function(){
+  function hit(path){
+    fetch(path, {cache:'no-store'}).catch(()=>{});
+  }
+  function bind(btn, path){
+    if(!btn) return;
+    btn.style.cursor='pointer';
+    btn.style.pointerEvents='auto';
+    btn.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); hit(path); }, {passive:false});
+    btn.addEventListener('touchend', function(e){ e.preventDefault(); e.stopPropagation(); hit(path); }, {passive:false});
+  }
+  function findByText(want){
+    want = want.toUpperCase();
+    const els = Array.from(document.querySelectorAll('button, a, div'));
+    for(const el of els){
+      const t = (el.textContent||'').trim().toUpperCase();
+      if(t === want) return el;
+    }
+    for(const el of els){
+      const t = (el.textContent||'').trim().toUpperCase();
+      if(t.includes(want)) return el;
+    }
+    return null;
+  }
+  // Bind the three buttons by visible label
+  bind(findByText('SET A'), '/api/btn2/A');
+  bind(findByText('SET B'), '/api/btn2/B');
+  bind(findByText('RESET'), '/api/btn2/RESET');
+})();
+</script>
+
+
+<!-- UNICON_TOUCH_TO_CLICK_V1 -->
+<script>
+(function(){
+  function guessCamEl(){
+    // Try common patterns: <img>, <canvas>, <video>
+    const cands = [];
+    cands.push(document.querySelector('#cam'));
+    cands.push(document.querySelector('#camera'));
+    cands.push(document.querySelector('#video'));
+    cands.push(document.querySelector('img'));
+    cands.push(document.querySelector('canvas'));
+    cands.push(document.querySelector('video'));
+    for(const el of cands){ if(el) return el; }
+    return null;
+  }
+
+  function makeClickable(el){
+    if(!el) return;
+    el.style.pointerEvents = 'auto';
+    el.style.touchAction = 'none';   // critical on mobile
+    el.style.userSelect = 'none';
+    el.style.webkitUserSelect = 'none';
+  }
+
+  function touchToClick(el){
+    if(!el) return;
+    el.addEventListener('touchstart', function(e){ e.preventDefault(); }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      try {
+        e.preventDefault();
+        const t = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
+        if(!t) return;
+
+        const rect = el.getBoundingClientRect();
+        const x = t.clientX - rect.left;
+        const y = t.clientY - rect.top;
+
+        const ev = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: t.clientX,
+          clientY: t.clientY
+        });
+        // Some handlers read offsetX/offsetY; we can't set them directly,
+        // but clientX/clientY + rect usually works in existing code.
+        el.dispatchEvent(ev);
+      } catch(_) {}
+    }, {passive:false});
+  }
+
+  window.addEventListener('load', function(){
+    const el = guessCamEl();
+    makeClickable(el);
+    touchToClick(el);
+
+    // Also make the whole stream container clickable if present
+    const container = el ? el.parentElement : null;
+    if(container) {
+      container.style.pointerEvents = 'auto';
+      container.style.touchAction = 'none';
+    }
+  });
+})();
+</script>
+
+
+<script>
+/* UNICON_RULER_V1_JS: tap on stream stores coords; buttons send coords */
+(function(){
+  let last = {x:0.5,y:0.5};
+
+  function getNormXY(ev, el){
+    const r = el.getBoundingClientRect();
+    let cx, cy;
+    if (ev.touches && ev.touches.length){
+      cx = ev.touches[0].clientX; cy = ev.touches[0].clientY;
+    } else {
+      cx = ev.clientX; cy = ev.clientY;
+    }
+    const x = (cx - r.left) / r.width;
+    const y = (cy - r.top) / r.height;
+    last.x = Math.min(1, Math.max(0, x));
+    last.y = Math.min(1, Math.max(0, y));
+  }
+
+  const img = document.getElementById('camStream') || document.querySelector('img[src="/cam.mjpg"], img[src="/cam"], img[src="/mjpeg/right"]');
+  if (img){
+    img.addEventListener('touchstart', (e)=>{ getNormXY(e, img); }, {passive:true});
+    img.addEventListener('click', (e)=>{ getNormXY(e, img); });
+  }
+
+  function hook(label, path){
+    const btns = Array.from(document.querySelectorAll('button, a, div')).filter(el=>{
+      const t = (el.innerText||'').trim().toUpperCase();
+      return t === label;
+    });
+    btns.forEach(el=>{
+      el.addEventListener('click', (e)=>{
+        try{ e.preventDefault(); }catch(_){}
+        fetch(path + '?x=' + last.x.toFixed(5) + '&y=' + last.y.toFixed(5), {method:'GET'})
+          .catch(()=>{});
+      }, true);
+    });
+  }
+
+  hook('SET A', '/api/btn2/A');
+  hook('SET B', '/api/btn2/B');
+  hook('RESET', '/api/btn2/RESET');
+})();
+</script>
+
+
+<script>
+(function(){
+  function ping(name){
+    // super simple GET (no CORS drama): image beacon
+    var u = "/api/btn2/" + name + "?ts=" + Date.now();
+    var img = new Image();
+    img.src = u;
+  }
+  function bind(id, name){
+    var el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("touchstart", function(e){ e.preventDefault(); ping(name); }, {passive:false});
+    el.addEventListener("click", function(e){ e.preventDefault(); ping(name); });
+  }
+  bind("btn2A","A"); bind("btn2B","B"); bind("btn2R","RESET");
+})();
+</script>
+
+
+<script>
+(function(){
+  const st = document.createElement('div');
+  st.id = 'uniconBtn2Status';
+  st.style.cssText = 'position:fixed;top:6px;left:6px;z-index:10000;font:12px monospace;color:#00ff66;background:rgba(0,0,0,0.35);padding:4px 6px;border-radius:6px;pointer-events:none';
+  st.textContent = 'BTN2: idle';
+  document.addEventListener('DOMContentLoaded', () => document.body.appendChild(st), { once:true });
+
+  function setStatus(t){ try{ st.textContent = t; }catch(e){} }
+
+  async function hit(name){
+    try{
+      setStatus('BTN2 HIT ' + name + ' ...');
+      const url = '/api/btn2/' + encodeURIComponent(name) + '?x=0.25&y=0.25&_=' + Date.now();
+      const r = await fetch(url, { method:'GET', cache:'no-store' });
+      const j = await r.json();
+      setStatus('BTN2 OK ' + name + ' last=' + (j && j.state ? j.state.last : '?'));
+      console.log('BTN2', name, j);
+    }catch(e){
+      setStatus('BTN2 ERR ' + name);
+      console.error(e);
+    }
+  }
+
+  function bindByText(txt, name){
+    const els = Array.from(document.querySelectorAll('a,button,div'));
+    for(const el of els){
+      if((el.textContent || '').trim().toUpperCase() === txt){
+        el.style.pointerEvents = 'auto';
+        el.style.zIndex = 10000;
+        el.addEventListener('click', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); hit(name); }, { passive:false });
+        el.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); ev.stopPropagation(); hit(name); }, { passive:false });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  window.addEventListener('load', ()=>{
+    bindByText('SET A','A');
+    bindByText('SET B','B');
+    bindByText('RESET','RESET');
+  });
+})();
+</script>
+
+
+<script>
+(function(){
+  let lastX = 0.5, lastY = 0.5;
+
+  function setStatus(msg){
+    const el = document.getElementById('btn2Status');
+    if(el) el.textContent = msg;
+  }
+
+  async function hit(url){
+    try{
+      const r = await fetch(url, {cache:'no-store'});
+      const j = await r.json();
+      setStatus('BTN2 OK: ' + (j.btn || '?') + ' x=' + lastX.toFixed(3) + ' y=' + lastY.toFixed(3));
+      return j;
+    }catch(e){
+      setStatus('BTN2 ERR: ' + e);
+    }
+  }
+
+  window.btn2A = ()=> hit(`/api/btn2/A?x=${lastX}&y=${lastY}`);
+  window.btn2B = ()=> hit(`/api/btn2/B?x=${lastX}&y=${lastY}`);
+  window.btn2R = ()=> hit(`/api/btn2/RESET`);
+
+  function onTap(ev){
+    const img = document.getElementById('cam');
+    if(!img) return;
+    const rect = img.getBoundingClientRect();
+    const t = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+    const x = (t.clientX - rect.left) / rect.width;
+    const y = (t.clientY - rect.top) / rect.height;
+    lastX = Math.max(0, Math.min(1, x));
+    lastY = Math.max(0, Math.min(1, y));
+    setStatus(`TAP x=${lastX.toFixed(3)} y=${lastY.toFixed(3)}`);
+    ev.preventDefault();
+  }
+
+  function hook(){
+    const img = document.getElementById('cam');
+    if(!img) { setTimeout(hook, 300); return; }
+    img.addEventListener('touchstart', onTap, {passive:false});
+    img.addEventListener('mousedown', onTap);
+    setStatus('BTN2: tap image, then SET A/B');
+  }
+  hook();
+})();
+</script>
+
+</body>
+
+</html>

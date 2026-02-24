@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UNICON Operate – Live Job</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <img id="cam" src="/cam.mjpg" alt="cam" />
+    <div id="tint"></div>
+    <canvas id="overlay"></canvas>
+
+    <div id="hud">
+      <div id="hudline">boot...</div>
+    </div>
+
+    <div id="help">
+      LMB: point A → point B (ruler) | RMB: clear | Wheel: zoom | Shift+Drag: pan | Alt+Click: delete nearest
+    </div>
+  </div>
+
+  <!-- BASE (locked) -->
+  <script src="/static/app.base.js"></script>
+
+  <!-- PATCHES (add new features here, one file per feature) -->
+  <!-- example:
+  <script src="/static/patches/20260126_layers.js"></script>
+  <script src="/static/patches/20260126_export_import_auto.js"></script>
+  -->
+</body>
+</html>

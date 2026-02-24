@@ -1,0 +1,20 @@
+import os
+import sys
+import importlib.util
+
+TARGET = os.environ.get("UNICON_TARGET", "/home/pi/UNICON/src/cam_dual_hud_web.py")
+
+def _load(path: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"spec fail for {path}")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+if __name__ == "__main__":
+    m = _load(TARGET, "unicon_target_app")
+    app = getattr(m, "app", None)
+    if app is None:
+        raise RuntimeError("target has no global 'app'")
+    app.run(host="0.0.0.0", port=8095, threaded=True)
