@@ -1,9 +1,0 @@
-from flask import Blueprint, jsonify
-from plugins import btn2_fix_api
-
-bp = Blueprint("plugin_ruler_state_api_v1", __name__)
-
-@bp.get("/ruler/state")
-def ruler_state():
-    st = getattr(btn2_fix_api, "STATE", None) or {}
-    return jsonify(ok=True, state={"A": st.get("A"), "B": st.get("B"), "last": st.get("last"), "reset": st.get("reset", 0)})

@@ -1,1 +1,0 @@
-{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /home/pi/UNICON/src/unicon_run.py ; ignore_errors=no ; start_time=[Sun 2026-02-22 03:20:20 GMT] ; stop_time=[Sun 2026-02-22 11:26:28 GMT] ; pid=23213 ; code=killed ; status=15/TERM }

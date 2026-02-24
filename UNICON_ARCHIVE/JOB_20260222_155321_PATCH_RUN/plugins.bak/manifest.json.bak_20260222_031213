@@ -1,6 +1,0 @@
-{
-  "enabled": [
-    "ping_api.py",
-    "btn2_fix_api.py"
-  ]
-}

@@ -39,3 +39,6 @@ Thumbs.db
 # Temp
 tmp/
 .cache/
+
+# UNICON archives (snapshots/backups/logs) - NEVER in git
+UNICON_ARCHIVE/
